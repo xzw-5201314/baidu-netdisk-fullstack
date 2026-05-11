@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Logs
 logs
 *.log
@@ -141,3 +142,11 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+=======
+node_modules/
+.DS_Store
+dist/
+.env
+server/uploads/
+server/target/
+>>>>>>> 508afed (第一次提交代码)
