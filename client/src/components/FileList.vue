@@ -4,9 +4,9 @@
     <table class="file-table" v-if="viewMode === 'list'">
       <thead>
         <tr>
-          <th>
-            <input 
-              type="checkbox" 
+          <th class="col-check">
+            <input
+              type="checkbox"
               :checked="isAllSelected"
               @change="toggleSelectAll"
             />
@@ -14,14 +14,20 @@
           <th class="col-name">文件名</th>
           <th class="col-time">修改时间</th>
           <th class="col-size">大小</th>
-          <th class="col-actions">操作</th>
+          <th class="col-actions-header"></th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="file in files" :key="file.name" class="file-row">
-          <td>
-            <input 
-              type="checkbox" 
+        <tr
+          v-for="file in files"
+          :key="file.name"
+          class="file-row"
+          :class="{ 'folder-row': file.type === 'folder' }"
+          @click="file.type === 'folder' && $emit('enter-folder', file)"
+        >
+          <td class="col-check" @click.stop>
+            <input
+              type="checkbox"
               :checked="selectedIds.includes(file.id)"
               @change="toggleSelect(file.id)"
             />
@@ -29,10 +35,10 @@
           <td class="col-name">
             <span class="file-icon">{{ getFileIcon(file) }}</span>
             <template v-if="file.isEditing">
-              <div class="inline-edit-wrapper">
-                <input 
-                  v-model="file.name" 
-                  class="inline-edit-input" 
+              <div class="inline-edit-wrapper" @click.stop>
+                <input
+                  v-model="file.name"
+                  class="inline-edit-input"
                   placeholder="请输入文件夹名称"
                   @keyup.enter="$emit('confirm-create', file.name)"
                   @keyup.escape="$emit('cancel-create')"
@@ -44,7 +50,7 @@
                 </div>
               </div>
             </template>
-            <span 
+            <span
               v-else
               :class="['file-name', { 'folder-link': file.type === 'folder' }]"
               @click="file.type === 'folder' && $emit('enter-folder', file)"
@@ -52,11 +58,13 @@
           </td>
           <td class="col-time">{{ file.time }}</td>
           <td class="col-size">{{ file.size }}</td>
-          <td class="col-actions">
-            <button class="action-btn" @click="$emit('preview', file)">👁️</button>
-            <button class="action-btn" @click="$emit('download', file)">⬇️</button>
-            <button class="action-btn" @click="$emit('move', file)">📋</button>
-            <button class="action-btn" @click="$emit('delete', file)">🗑️</button>
+          <td class="row-actions">
+            <div class="action-bar" @click.stop>
+              <button class="action-btn" @click="$emit('preview', file)" title="预览">👁️</button>
+              <button class="action-btn" @click="$emit('download', file)" title="下载">⬇️</button>
+              <button class="action-btn" @click="$emit('move', file)" title="移动到">📋</button>
+              <button class="action-btn" @click="$emit('delete', file)" title="删除">🗑️</button>
+            </div>
           </td>
         </tr>
       </tbody>
@@ -158,7 +166,7 @@ const getFileIcon = (file: any) => {
 .file-table {
   width: 100%;
   border-collapse: collapse;
-  table-layout: auto;
+  table-layout: fixed;
 }
 
 .file-table th {
@@ -177,46 +185,110 @@ const getFileIcon = (file: any) => {
   vertical-align: middle;
   white-space: nowrap;
   text-align: left;
+  overflow: hidden;
 }
 
-.file-table th:first-child,
-.file-table td:first-child {
+.col-check {
   width: 40px;
-  padding-left: 16px;
-  position: sticky;
-  left: 0;
-  background: inherit;
+  padding-left: 16px !important;
+}
+
+.col-name {
+  overflow: hidden;
+  width: 70%;
+}
+
+.col-time {
+  width: 15%;
+  text-align: right;
+}
+
+.col-size {
+  width: 15%;
+  text-align: right;
+}
+
+.col-actions-header {
+  width: 0;
+  padding: 0 !important;
+}
+
+.file-row {
+  position: relative;
 }
 
 .file-row:hover {
   background: #F8FAFC;
 }
 
-.col-name {
-  width: 50%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.file-row:hover .action-bar {
+  background: #F8FAFC;
+  opacity: 1;
+}
+
+.folder-row {
+  cursor: pointer;
+}
+
+/* 浮动操作栏 - 右侧遮盖 */
+.row-actions {
+  width: 0;
+  padding: 0 !important;
+  border: none !important;
+}
+
+.action-bar {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
   align-items: center;
-}
-
-.col-time {
-  width: 160px;
-  text-align: right;
-}
-
-.col-size {
-  width: 100px;
-  text-align: right;
-}
-
-.col-actions {
-  width: 120px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
   gap: 4px;
+  padding: 4px 16px;
+  background: #F8FAFC;
+  border-radius: 4px;
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+
+.action-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  position: relative;
+}
+
+.action-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+/* 自定义 tooltip */
+.action-btn::after {
+  content: attr(title);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #333;
+  color: white;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.action-btn:hover::after {
+  opacity: 1;
 }
 
 .file-icon {
@@ -227,6 +299,16 @@ const getFileIcon = (file: any) => {
   margin-right: 8px;
 }
 
+.file-name {
+  font-size: 14px;
+  color: #1F2329;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  max-width: 100%;
+}
+
 .folder-link {
   cursor: pointer;
   color: #4A90D9;
@@ -234,10 +316,6 @@ const getFileIcon = (file: any) => {
 
 .folder-link:hover {
   text-decoration: underline;
-}
-
-.folder-icon {
-  cursor: pointer;
 }
 
 .inline-edit-wrapper {
@@ -284,34 +362,6 @@ const getFileIcon = (file: any) => {
 
 .confirm-icon:hover, .cancel-icon:hover {
   background: #f0f0f0;
-}
-
-.file-name {
-  font-size: 14px;
-  color: #1F2329;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 300px;
-}
-
-.action-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 16px;
-  padding: 6px 8px;
-  border-radius: 4px;
-  transition: background 0.2s;
-  opacity: 0;
-}
-
-.file-row:hover .action-btn {
-  opacity: 1;
-}
-
-.action-btn:hover {
-  background: #E5E6EB;
 }
 
 .file-grid {
