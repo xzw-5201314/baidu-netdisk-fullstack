@@ -56,7 +56,7 @@
 
 1. **克隆项目**
 ```bash
-git clone <repository-url>
+git clone https://github.com/xzw-5201314/baidu-netdisk-fullstack.git
 cd 仿百度网盘
 ```
 
@@ -93,4 +93,52 @@ pnpm dev
 前端将在 http://localhost:5173 启动
 
 ## 📁 项目结构
+
+```
+仿百度网盘/
+├── client/                  # 前端项目
+│   ├── src/
+│   │   ├── components/      # Vue 组件
+│   │   │   ├── Login.vue         # 登录/注册页面
+│   │   │   ├── Header.vue        # 顶部导航栏
+│   │   │   ├── Sidebar.vue       # 侧边栏文件分类
+│   │   │   ├── FileList.vue      # 文件列表/网格展示
+│   │   │   ├── Toolbar.vue       # 工具栏（上传、新建文件夹等）
+│   │   │   ├── MoveDialog.vue    # 移动文件对话框
+│   │   │   ├── FolderTreeItem.vue # 文件夹树节点
+│   │   │   └── EmptyState.vue    # 空状态占位组件
+│   │   ├── config/          # 配置文件
+│   │   ├── App.vue          # 根组件
+│   │   ├── main.ts          # 入口文件
+│   │   └── style.css        # 全局样式
+│   ├── package.json
+│   └── vite.config.ts
+├── server/                  # 后端项目
+│   ├── models/              # MongoDB 数据模型
+│   │   ├── User.js              # 用户模型
+│   │   ├── File.js              # 文件模型
+│   │   └── Folder.js            # 文件夹模型
+│   ├── config/
+│   │   └── db.js            # 数据库连接配置
+│   ├── uploads/             # 文件上传存储目录
+│   ├── index.js             # 后端入口文件
+│   └── package.json
+└── README.md
+```
+
+## 📸 界面预览
+
+| 登录页面 | 文件管理 |
+|---------|---------|
+| 用户注册与登录界面 | 文件上传、下载、预览、移动等操作 |
+
+> 后续将持续补充项目截图
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request 来帮助改进本项目。
+
+## 📄 许可证
+
+本项目仅供学习交流使用。
 
