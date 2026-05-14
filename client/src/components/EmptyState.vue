@@ -1,10 +1,10 @@
 <!-- src/components/EmptyState.vue -->
 <template>
   <div class="empty-state">
-    <div class="empty-icon">☁️</div>
-    <div class="empty-title">当前目录为空</div>
-    <div class="empty-desc">上传你的第一个文件吧</div>
-    <div class="empty-actions">
+    <div class="empty-icon">{{ mode === 'search' ? '🔍' : '☁️' }}</div>
+    <div class="empty-title">{{ mode === 'search' ? '未找到匹配的文件' : '当前目录为空' }}</div>
+    <div class="empty-desc">{{ mode === 'search' ? '换个关键词试试吧' : '上传你的第一个文件吧' }}</div>
+    <div v-if="mode !== 'search'" class="empty-actions">
       <button class="empty-btn empty-btn-primary" @click="$emit('upload')">
         <span>📤</span>
         <span>上传文件</span>
@@ -18,6 +18,9 @@
 </template>
 
 <script setup lang="ts">
+defineProps<{
+  mode?: string;
+}>();
 defineEmits(['upload', 'create-folder']);
 </script>
 

@@ -9,13 +9,14 @@
     </div>
     <div class="header-center">
       <div class="search-box">
-        <input type="text" placeholder="输入文件名搜索" v-model="searchText" class="search-input" />
-        <button class="search-btn">🔍</button>
+        <input type="text" placeholder="输入文件名搜索" v-model="searchText" class="search-input" @keyup="onKeyup" />
+        <button v-if="searching" class="search-exit-btn" @click="onExitSearch" title="退出搜索">✕</button>
+        <button v-else class="search-btn" @click="doSearch">🔍</button>
       </div>
     </div>
     <div class="header-right">
-      <button class="header-btn">🔄</button>
-      <button class="header-btn">⚙️</button>
+      <button class="header-btn" @click="emit('refresh')" title="刷新">🔄</button>
+      <button class="header-btn" @click="emit('settings')" title="设置">⚙️</button>
       <div class="user-info">
         <span class="username">{{ username }}</span>
         <div class="avatar">👤</div>
@@ -26,13 +27,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 
 defineProps<{
   username: string;
+  searching?: boolean;
 }>();
 
-const emit = defineEmits(['logout']);
+const emit = defineEmits(['logout', 'refresh', 'settings', 'search', 'exit-search']);
 
 const handleLogout = () => {
   if (confirm('确定要退出登录吗？')) {
@@ -41,6 +43,34 @@ const handleLogout = () => {
 };
 
 const searchText = ref('');
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+const doSearch = () => {
+  emit('search', searchText.value.trim());
+};
+
+// 回车立即搜索
+const onKeyup = (e: KeyboardEvent) => {
+  if (e.key === 'Enter') {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    doSearch();
+  }
+};
+
+// 输入防抖 400ms
+watch(searchText, (val) => {
+  if (debounceTimer) clearTimeout(debounceTimer);
+  if (!val.trim()) {
+    emit('exit-search');
+    return;
+  }
+  debounceTimer = setTimeout(() => doSearch(), 400);
+});
+
+const onExitSearch = () => {
+  searchText.value = '';
+  emit('exit-search');
+};
 </script>
 
 <style scoped>
@@ -86,7 +116,8 @@ const searchText = ref('');
   background: rgba(255,255,255,0.2);
   border-radius: 24px;
   padding: 0 16px;
-  width: 400px;
+  width: 100%;
+  max-width: 600px;
 }
 
 .search-input {
@@ -109,6 +140,24 @@ const searchText = ref('');
   color: white;
   cursor: pointer;
   font-size: 14px;
+}
+
+.search-exit-btn {
+  background: rgba(255,255,255,0.3);
+  border: none;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.search-exit-btn:hover {
+  background: rgba(255,255,255,0.5);
 }
 
 .header-right {

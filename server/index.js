@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -11,9 +12,8 @@ const connectDB = require('./config/db');
 const User = require('./models/User');
 const File = require('./models/File');
 
-// JWT 密钥（建议放到环境变量中）
-const JWT_SECRET = 'your-secret-key-here-change-in-production';
-const JWT_EXPIRE = '7d'; // Token有效期7天
+const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_EXPIRE = process.env.JWT_EXPIRE;
 const Folder = require('./models/Folder');
 const app = express();
 
@@ -39,7 +39,7 @@ const ensureUserDirs = (userId) => {
 // // 3. 探活接口：测试前后端是否连通
 
 // 4. 启动服务
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 // JWT验证中间件
 const auth = (req, res, next) => {
   // 从请求头获取Token
@@ -268,34 +268,66 @@ app.post('/merge', auth, async (req, res) => {
 
 app.get('/files', auth, async (req, res) => {
   const { targetDir } = ensureUserDirs(req.user.id);
-  const { folderId } = req.query;
+  const { folderId, category } = req.query;
 
   try {
     if (!fse.existsSync(targetDir)) {
       return res.json({ code: 200, data: [] });
     }
 
-    // 从数据库查询文件，支持按文件夹筛选
-    const query = { userId: req.user.id };
-    if (folderId) {
-      query.folderId = folderId;
+    const categoryMap = {
+      video: ['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv'],
+      music: ['mp3', 'wav', 'flac', 'aac', 'ogg', 'mgg'],
+      image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'],
+      doc: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md'],
+    };
+
+    let dbFiles;
+
+    if (category && category !== 'all') {
+      // 分类模式：查询用户全部文件，按扩展名过滤，不区分文件夹
+      dbFiles = await File.find({ userId: req.user.id });
+
+      if (category === 'other') {
+        const allExts = Object.values(categoryMap).flat();
+        dbFiles = dbFiles.filter(f => {
+          const ext = f.fileName.split('.').pop()?.toLowerCase();
+          return !allExts.includes(ext || '');
+        });
+      } else {
+        const exts = categoryMap[category] || [];
+        dbFiles = dbFiles.filter(f => {
+          const ext = f.fileName.split('.').pop()?.toLowerCase();
+          return exts.includes(ext || '');
+        });
+      }
     } else {
-      query.folderId = null;
+      // 目录模式：按文件夹筛选
+      const query = { userId: req.user.id };
+      if (folderId) {
+        query.folderId = folderId;
+      } else {
+        query.folderId = null;
+      }
+      dbFiles = await File.find(query);
     }
 
-    const dbFiles = await File.find(query);
-    const fileList = await Promise.all(
+    const fileList = (await Promise.all(
       dbFiles.map(async (dbFile) => {
-        const stats = await fse.stat(dbFile.filePath);
-        return {
-          id: dbFile._id.toString(),
-          name: dbFile.fileName,
-          size: (stats.size / 1024 / 1024).toFixed(2) + ' MB',
-          time: stats.mtime.toLocaleString(),
-          folderId: dbFile.folderId?.toString() || null
-        };
+        try {
+          const stats = await fse.stat(dbFile.filePath);
+          return {
+            id: dbFile._id.toString(),
+            name: dbFile.fileName,
+            size: (stats.size / 1024 / 1024).toFixed(2) + ' MB',
+            time: stats.mtime.toLocaleString(),
+            folderId: dbFile.folderId?.toString() || null
+          };
+        } catch {
+          return null;
+        }
       })
-    );
+    )).filter(Boolean);
 
     res.json({ code: 200, data: fileList });
   } catch (err) {
@@ -316,31 +348,6 @@ app.get('/download/:fileName', auth, async (req, res) => {
 
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
     res.setHeader('Content-Type', 'application/octet-stream');
-    const fileStream = fse.createReadStream(filePath);
-    fileStream.pipe(res);
-
-  } catch (error) {
-    console.error('下载失败：', error);
-    res.status(500).json({ code: 500, msg: '下载失败' });
-  }
-});
-
-// 下载接口
-app.get('/download/:fileName', async (req, res) => {
-  const { fileName } = req.params;
-  const filePath = path.resolve(__dirname, 'target', fileName);
-
-  try {
-    // 检查文件是否存在
-    if (!fse.existsSync(filePath)) {
-      return res.status(404).json({ code: 404, msg: '文件不存在' });
-    }
-
-    // 设置响应头，触发浏览器下载
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
-    res.setHeader('Content-Type', 'application/octet-stream');
-
-    // 创建文件流并发送
     const fileStream = fse.createReadStream(filePath);
     fileStream.pipe(res);
 
@@ -559,5 +566,135 @@ app.patch('/api/folders/:id', auth, async (req, res) => {
     res.json({ code: 200, msg: '移动成功' });
   } catch (error) {
     res.status(500).json({ code: 500, msg: '移动失败' });
+  }
+});
+
+// 重命名文件
+app.patch('/files/:id/rename', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { newName } = req.body;
+
+    if (!newName || !newName.trim()) {
+      return res.status(400).json({ code: 400, msg: '文件名不能为空' });
+    }
+
+    const file = await File.findOne({ _id: id, userId: req.user.id });
+    if (!file) {
+      return res.status(404).json({ code: 404, msg: '文件不存在' });
+    }
+
+    const { targetDir } = ensureUserDirs(req.user.id);
+    const oldPath = file.filePath;
+    const newPath = path.resolve(targetDir, newName.trim());
+
+    if (fse.existsSync(newPath)) {
+      return res.status(400).json({ code: 400, msg: '同名文件已存在' });
+    }
+
+    await fse.move(oldPath, newPath);
+    file.fileName = newName.trim();
+    file.filePath = newPath;
+    await file.save();
+
+    res.json({ code: 200, msg: '重命名成功' });
+  } catch (error) {
+    console.error('重命名失败:', error);
+    res.status(500).json({ code: 500, msg: '重命名失败' });
+  }
+});
+
+// 重命名文件夹
+app.patch('/folders/:id/rename', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { newName } = req.body;
+
+    if (!newName || !newName.trim()) {
+      return res.status(400).json({ code: 400, msg: '文件夹名称不能为空' });
+    }
+
+    const folder = await Folder.findOne({ _id: id, userId: req.user.id });
+    if (!folder) {
+      return res.status(404).json({ code: 404, msg: '文件夹不存在' });
+    }
+
+    // 检查同级目录下是否有同名文件夹
+    const existing = await Folder.findOne({
+      userId: req.user.id,
+      parentId: folder.parentId,
+      name: newName.trim(),
+      _id: { $ne: id }
+    });
+    if (existing) {
+      return res.status(400).json({ code: 400, msg: '同名文件夹已存在' });
+    }
+
+    folder.name = newName.trim();
+    await folder.save();
+
+    res.json({ code: 200, msg: '重命名成功' });
+  } catch (error) {
+    console.error('重命名失败:', error);
+    res.status(500).json({ code: 500, msg: '重命名失败' });
+  }
+});
+
+// 搜索文件
+app.get('/search', auth, async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || !q.trim()) {
+      return res.json({ code: 200, data: [] });
+    }
+
+    const keyword = q.trim();
+    const regex = new RegExp(keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+
+    // 搜索文件
+    const files = await File.find({
+      userId: req.user.id,
+      fileName: regex
+    });
+
+    // 搜索文件夹
+    const folders = await Folder.find({
+      userId: req.user.id,
+      name: regex
+    });
+
+    const fileList = await Promise.all(
+      files.map(async (dbFile) => {
+        try {
+          const stats = await fse.stat(dbFile.filePath);
+          return {
+            id: dbFile._id.toString(),
+            name: dbFile.fileName,
+            size: (stats.size / 1024 / 1024).toFixed(2) + ' MB',
+            time: stats.mtime.toLocaleString(),
+            folderId: dbFile.folderId?.toString() || null,
+            type: 'file'
+          };
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    const folderList = folders.map(folder => ({
+      id: folder._id.toString(),
+      name: folder.name,
+      type: 'folder',
+      size: '-',
+      time: folder.createdAt.toLocaleString(),
+      folderId: folder.parentId?.toString() || null
+    }));
+
+    // 文件夹优先
+    const result = [...folderList, ...fileList.filter(Boolean)];
+    res.json({ code: 200, data: result });
+  } catch (error) {
+    console.error('搜索失败:', error);
+    res.status(500).json({ code: 500, msg: '搜索失败' });
   }
 });

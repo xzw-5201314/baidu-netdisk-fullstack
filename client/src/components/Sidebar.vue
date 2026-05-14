@@ -17,8 +17,8 @@
     
     <div class="sidebar-categories">
       <div class="category-title">分类</div>
-      <div 
-        v-for="cat in categories" 
+      <div
+        v-for="cat in categories"
         :key="cat.id"
         :class="['category-item', { active: currentCategory === cat.id }]"
         @click="$emit('category-change', cat.id)"
@@ -76,7 +76,8 @@ const categories = [
 
 <style scoped>
 .sidebar {
-  width: 140px;
+  width: 180px;
+  min-width: 140px;
   background: #FFFFFF;
   padding: 12px;
   display: flex;

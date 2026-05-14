@@ -20,9 +20,9 @@
       <tbody>
         <tr
           v-for="file in files"
-          :key="file.name"
+          :key="file.id"
           class="file-row"
-          :class="{ 'folder-row': file.type === 'folder' }"
+          :class="{ 'folder-row': file.type === 'folder', 'renaming-row': renamingId === file.id }"
           @click="file.type === 'folder' && $emit('enter-folder', file)"
         >
           <td class="col-check" @click.stop>
@@ -33,9 +33,9 @@
             />
           </td>
           <td class="col-name">
-            <span class="file-icon">{{ getFileIcon(file) }}</span>
             <template v-if="file.isEditing">
               <div class="inline-edit-wrapper" @click.stop>
+                <span class="file-icon">{{ getFileIcon(file) }}</span>
                 <input
                   v-model="file.name"
                   class="inline-edit-input"
@@ -50,18 +50,37 @@
                 </div>
               </div>
             </template>
-            <span
-              v-else
-              :class="['file-name', { 'folder-link': file.type === 'folder' }]"
-              @click="file.type === 'folder' && $emit('enter-folder', file)"
-            >{{ file.name }}</span>
+            <template v-else-if="renamingId === file.id">
+              <div class="inline-edit-wrapper" @click.stop>
+                <span class="file-icon">{{ getFileIcon(file) }}</span>
+                <input
+                  v-model="renameValue"
+                  class="inline-edit-input"
+                  @keyup="onRenameKeyup"
+                  @blur="onRenameBlur"
+                  v-focus
+                />
+                <div class="inline-actions">
+                  <span class="confirm-icon" @mousedown.prevent="onRenameBtn('confirm')">✓</span>
+                  <span class="cancel-icon" @mousedown.prevent="onRenameBtn('cancel')">✕</span>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <span class="file-icon">{{ getFileIcon(file) }}</span>
+              <span
+                :class="['file-name', { 'folder-link': file.type === 'folder' }]"
+                @click="file.type === 'folder' && $emit('enter-folder', file)"
+              >{{ file.name }}</span>
+            </template>
           </td>
           <td class="col-time">{{ file.time }}</td>
           <td class="col-size">{{ file.size }}</td>
           <td class="row-actions">
-            <div class="action-bar" @click.stop>
+            <div v-if="renamingId !== file.id" class="action-bar" @click.stop>
               <button class="action-btn" @click="$emit('preview', file)" title="预览">👁️</button>
               <button class="action-btn" @click="$emit('download', file)" title="下载">⬇️</button>
+              <button class="action-btn" @click="startRename(file)" title="重命名">✏️</button>
               <button class="action-btn" @click="$emit('move', file)" title="移动到">📋</button>
               <button class="action-btn" @click="$emit('delete', file)" title="删除">🗑️</button>
             </div>
@@ -71,9 +90,9 @@
     </table>
     
     <div class="file-grid" v-else>
-      <div 
-        v-for="file in files" 
-        :key="file.name" 
+      <div
+        v-for="file in files"
+        :key="file.id"
         class="file-card"
       >
         <input 
@@ -86,14 +105,33 @@
           :class="['card-icon', { 'folder-icon': file.type === 'folder' }]"
           @click="file.type === 'folder' && $emit('enter-folder', file)"
         >{{ getFileIcon(file) }}</div>
-        <div 
+        <div
+          v-if="renamingId === file.id"
+          class="card-rename-wrapper"
+          @click.stop
+        >
+          <input
+            v-model="renameValue"
+            class="card-rename-input"
+            @keyup="onRenameKeyup"
+            @blur="onRenameBlur"
+            v-focus
+          />
+          <div class="card-rename-actions">
+            <span class="confirm-icon" @mousedown.prevent="onRenameBtn('confirm')">✓</span>
+            <span class="cancel-icon" @mousedown.prevent="onRenameBtn('cancel')">✕</span>
+          </div>
+        </div>
+        <div
+          v-else
           :class="['card-name', { 'folder-link': file.type === 'folder' }]"
           @click="file.type === 'folder' && $emit('enter-folder', file)"
         >{{ file.name }}</div>
         <div class="card-meta">{{ file.size }} · {{ file.time }}</div>
-        <div class="card-actions">
+        <div v-if="renamingId !== file.id" class="card-actions">
           <button class="card-action-btn" @click="$emit('preview', file)">👁️</button>
           <button class="card-action-btn" @click="$emit('download', file)">⬇️</button>
+          <button class="card-action-btn" @click="startRename(file)">✏️</button>
           <button class="card-action-btn" @click="$emit('move', file)">📋</button>
           <button class="card-action-btn" @click="$emit('delete', file)">🗑️</button>
         </div>
@@ -103,15 +141,51 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 
 const props = defineProps<{
   files: any[];
   selectedIds: string[];
   viewMode: string;
+  renamingId?: string | null;
 }>();
 
-const emit = defineEmits(['preview', 'download', 'move', 'delete', 'select-change', 'enter-folder', 'confirm-create', 'cancel-create']);
+const emit = defineEmits(['preview', 'download', 'move', 'delete', 'rename', 'select-change', 'enter-folder', 'confirm-create', 'cancel-create', 'confirm-rename', 'cancel-rename']);
+
+const renameValue = ref('');
+
+const startRename = (file: any) => {
+  renameValue.value = file.name;
+  emit('rename', file.id);
+};
+
+const onRenameKeyup = (e: KeyboardEvent) => {
+  if (e.key === 'Enter') {
+    emit('confirm-rename', renameValue.value);
+  } else if (e.key === 'Escape') {
+    emit('cancel-rename');
+  }
+};
+
+let blurTimer: ReturnType<typeof setTimeout> | null = null;
+
+const onRenameBlur = () => {
+  blurTimer = setTimeout(() => {
+    emit('cancel-rename');
+  }, 150);
+};
+
+const onRenameBtn = (action: 'confirm' | 'cancel') => {
+  if (blurTimer) {
+    clearTimeout(blurTimer);
+    blurTimer = null;
+  }
+  if (action === 'confirm') {
+    emit('confirm-rename', renameValue.value);
+  } else {
+    emit('cancel-rename');
+  }
+};
 
 // 自定义指令：自动聚焦
 const vFocus = {
@@ -196,6 +270,8 @@ const getFileIcon = (file: any) => {
 .col-name {
   overflow: hidden;
   width: 70%;
+  display: flex;
+  align-items: center;
 }
 
 .col-time {
@@ -224,6 +300,10 @@ const getFileIcon = (file: any) => {
 .file-row:hover .action-bar {
   background: #F8FAFC;
   opacity: 1;
+}
+
+.renaming-row {
+  background: #F0F7FF !important;
 }
 
 .folder-row {
@@ -443,5 +523,28 @@ const getFileIcon = (file: any) => {
 
 .card-action-btn:hover {
   background: #E5E6EB;
+}
+
+.card-rename-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.card-rename-input {
+  width: 100%;
+  border: 1px solid #4A90D9;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 13px;
+  text-align: center;
+  outline: none;
+}
+
+.card-rename-actions {
+  display: flex;
+  gap: 8px;
 }
 </style>

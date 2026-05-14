@@ -63,6 +63,7 @@
 <script setup>
 import { ref, watch } from 'vue';
 import axios from 'axios';
+import { API_BASE } from '../config/api';
 import FolderTreeItem from './FolderTreeItem.vue';
 
 const props = defineProps({
@@ -89,8 +90,8 @@ const fetchRoot = async () => {
   loading.value = true;
   try {
     const [folderRes, fileRes] = await Promise.all([
-      axios.get('http://localhost:3000/folders?parentId=null'),
-      axios.get('http://localhost:3000/files')
+      axios.get(`${API_BASE}/folders?parentId=null`),
+      axios.get(`${API_BASE}/files`)
     ]);
     if (folderRes.data.code === 200) {
       rootFolders.value = folderRes.data.data;
@@ -111,12 +112,12 @@ const confirmMove = async () => {
   loading.value = true;
   try {
     if (props.moveType === 'file') {
-      await axios.post('http://localhost:3000/files/move', {
+      await axios.post(`${API_BASE}/files/move`, {
         fileId: props.moveId,
         folderId: selectedId.value
       });
     } else {
-      await axios.patch(`http://localhost:3000/api/folders/${props.moveId}`, {
+      await axios.patch(`${API_BASE}/api/folders/${props.moveId}`, {
         parentId: selectedId.value
       });
     }

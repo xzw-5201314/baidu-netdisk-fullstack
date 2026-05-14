@@ -47,6 +47,7 @@
 <script setup>
 import { ref } from 'vue';
 import axios from 'axios';
+import { API_BASE } from '../config/api';
 
 defineOptions({ name: 'FolderTreeItem' });
 
@@ -69,8 +70,8 @@ const toggleExpand = async () => {
     isLoading.value = true;
     try {
       const [folderRes, fileRes] = await Promise.all([
-        axios.get(`http://localhost:3000/folders?parentId=${props.folder._id}`),
-        axios.get(`http://localhost:3000/files?folderId=${props.folder._id}`)
+        axios.get(`${API_BASE}/folders?parentId=${props.folder._id}`),
+        axios.get(`${API_BASE}/files?folderId=${props.folder._id}`)
       ]);
       if (folderRes.data.code === 200) {
         children.value = folderRes.data.data;

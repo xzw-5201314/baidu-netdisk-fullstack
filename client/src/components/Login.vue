@@ -44,6 +44,7 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue';
 import axios from 'axios';
+import { API_BASE } from '../config/api';
 
 const emit = defineEmits(['login-success']);
 
@@ -64,7 +65,7 @@ const handleSubmit = async () => {
 
   try {
     const url = isLogin.value ? '/login' : '/register';
-    const res = await axios.post(`http://localhost:3000${url}`, form);
+    const res = await axios.post(`${API_BASE}${url}`, form);
 
     if (res.data.code === 200) {
       if (isLogin.value) {
@@ -97,7 +98,7 @@ const handleSubmit = async () => {
 
 <style scoped>
 .login-container {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;

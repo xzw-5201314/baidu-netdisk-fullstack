@@ -5,7 +5,7 @@
     
     <!-- 主页面 -->
     <template v-else>
-      <Header :username="username" @logout="handleLogout" />
+      <Header :username="username" :searching="isSearchMode" @logout="handleLogout" @refresh="handleRefresh" @settings="showSettings = true" @search="handleSearch" @exit-search="exitSearch" />
       
       <div class="main-content">
         <Sidebar 
@@ -43,25 +43,36 @@
             </div>
           
           <div class="content-body">
-            <EmptyState 
+            <div v-if="refreshing" class="refresh-loading">
+              <div class="refresh-spinner"></div>
+              <span>加载中...</span>
+            </div>
+            <template v-else>
+            <EmptyState
               v-if="container.fileList.length === 0"
+              :mode="isSearchMode ? 'search' : 'default'"
               @upload="handleUploadClick"
               @create-folder="handleCreateFolder"
             />
-            <FileList 
+            <FileList
               v-else
-              :files="displayFiles" 
+              :files="displayFiles"
               :selected-ids="selectedIds"
               :view-mode="viewMode"
+              :renaming-id="renamingId"
               @preview="handlePreview"
               @download="handleDownload"
               @move="handleMove"
               @delete="handleDelete"
+              @rename="handleStartRename"
               @select-change="handleSelectChange"
               @enter-folder="enterFolder"
               @confirm-create="confirmCreateFolder"
               @cancel-create="cancelCreate"
+              @confirm-rename="handleConfirmRename"
+              @cancel-rename="handleCancelRename"
             />
+            </template>
           </div>
         </main>
       </div>
@@ -84,7 +95,38 @@
       @close="showMoveDialog = false"
       @confirm="handleMoveConfirm"
     />
-    
+
+    <!-- 设置弹窗 -->
+    <div v-if="showSettings" class="settings-overlay" @click.self="showSettings = false">
+      <div class="settings-dialog">
+        <div class="settings-header">
+          <h3>⚙️ 系统设置</h3>
+          <button class="settings-close" @click="showSettings = false">✕</button>
+        </div>
+        <div class="settings-body">
+          <div class="settings-item">
+            <span class="settings-label">当前用户</span>
+            <span class="settings-value">{{ username }}</span>
+          </div>
+          <div class="settings-item">
+            <span class="settings-label">已用空间</span>
+            <span class="settings-value">{{ usedSpace }} / {{ totalSpace }}</span>
+          </div>
+          <div class="settings-item">
+            <span class="settings-label">API 地址</span>
+            <span class="settings-value">{{ apiBase }}</span>
+          </div>
+          <div class="settings-item">
+            <span class="settings-label">版本</span>
+            <span class="settings-value">Easy云盘 v1.0</span>
+          </div>
+        </div>
+        <div class="settings-footer">
+          <button class="settings-btn" @click="showSettings = false">关闭</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 上传进度条 -->
     <div v-if="container.isShowProgress" class="progress-overlay">
       <div class="progress-modal">
@@ -105,13 +147,24 @@
         </button>
       </div>
     </div>
+
+    <!-- 拖拽上传遮罩 -->
+    <div v-if="isDragging" class="drag-overlay">
+      <div class="drag-overlay-content">
+        <div class="drag-icon">📂</div>
+        <div class="drag-text">释放鼠标立即上传</div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted, computed } from 'vue';
+import { reactive, ref, onMounted, onUnmounted, computed } from 'vue';
 import axios from 'axios';
+import { API_BASE } from './config/api';
 import Login from './components/Login.vue';
+
+const apiBase = API_BASE;
 import Header from './components/Header.vue';
 import Sidebar from './components/Sidebar.vue';
 import Toolbar from './components/Toolbar.vue';
@@ -130,6 +183,18 @@ const usedSpace = ref('0 GB');
 const totalSpace = ref('15 GB');
 const usedPercent = ref(0);
 const currentCategory = ref('all');
+const showSettings = ref(false);
+const refreshing = ref(false);
+const renamingId = ref<string | null>(null);
+
+// 拖拽上传状态
+const isDragging = ref(false);
+const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB
+const sortBy = ref('time-desc');
+
+// 搜索状态
+const searchKeyword = ref('');
+const isSearchMode = computed(() => searchKeyword.value.length > 0);
 
 
 
@@ -155,46 +220,37 @@ const container = reactive({
 });
 
 
-// 2. 添加分类映射
-const categoryMap: Record<string, string[]> = {
-  video: ['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv'],
-  music: ['mp3', 'wav', 'flac', 'aac', 'ogg','mgg'],
-  image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'],
-  doc: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md'],
+// 分类名称映射
+const categoryNameMap: Record<string, string> = {
+  video: '视频',
+  music: '音乐',
+  image: '图片',
+  doc: '文档',
+  other: '其他',
 };
 
-// 3. 过滤后的文件列表
-const displayFiles = computed(() => {
-  // 如果不在根目录（有子文件夹路径），显示所有文件
-  if (currentFolderId.value !== null) {
-    return container.fileList;
-  }
-  
-  // 在根目录时，按分类过滤
-  if (currentCategory.value === 'all') {
-    return container.fileList;
-  }
-  
-  // 如果是"其他"分类，显示不在任何分类中的文件
-  if (currentCategory.value === 'other') {
-    const allDefinedExts = Object.values(categoryMap).flat();
-    return container.fileList.filter(file => {
-      const ext = file.name.split('.').pop()?.toLowerCase();
-      return !allDefinedExts.includes(ext || '');
-    });
-  }
-  
-  // 按分类过滤
-  const exts = categoryMap[currentCategory.value] || [];
-  return container.fileList.filter(file => {
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    return exts.includes(ext || '');
-  });
-});
+// 是否处于分类模式
+const isCategoryMode = computed(() => currentCategory.value !== 'all');
+
+// 3. 过滤后的文件列表（分类过滤已由后端完成）
+const displayFiles = computed(() => container.fileList);
 
 // 4. 处理分类变化
-const handleCategoryChange = (category: string) => {
+const handleCategoryChange = async (category: string) => {
   currentCategory.value = category;
+  selectedIds.value = [];
+
+  if (category === 'all') {
+    // 回到全部文件：重置到根目录
+    currentFolderId.value = null;
+    currentPath.value = [{ id: null, name: '全部文件' }];
+    await getFileList();
+  } else {
+    // 分类模式：重置路径，拉取全量分类数据
+    currentFolderId.value = null;
+    currentPath.value = [{ id: null, name: `分类结果：${categoryNameMap[category] || category}` }];
+    await getFileList(null, category);
+  }
 };
 
 // 检查登录状态
@@ -202,7 +258,7 @@ const checkLogin = async () => {
   const token = localStorage.getItem('token');
   if (token) {
     try {
-      const res = await axios.get('http://localhost:3000/verify', {
+      const res = await axios.get(`${API_BASE}/verify`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.data.code === 200) {
@@ -242,7 +298,7 @@ const handleMove = (file: any) => {
 // 确认移动
 const handleMoveConfirm = async () => {
   showMoveDialog.value = false;
-  await getFileList(currentFolderId.value);
+  await refreshFileList();
 };
 
 // 请求拦截器：自动携带Token
@@ -255,33 +311,39 @@ axios.interceptors.request.use(config => {
 });
 
 // 获取文件列表
-const getFileList = async (folderId?: string | null) => {
+const getFileList = async (folderId?: string | null, category?: string) => {
   try {
+    // 构建文件查询参数
+    const params = new URLSearchParams();
+    if (category && category !== 'all') {
+      params.set('category', category);
+    } else if (folderId) {
+      params.set('folderId', folderId);
+    }
+
     // 获取文件列表
-    const filesRes = await axios.get(folderId 
-      ? `http://localhost:3000/files?folderId=${folderId}`
-      : 'http://localhost:3000/files'
-    );
+    const filesRes = await axios.get(`${API_BASE}/files?${params.toString()}`);
 
-    // 获取文件夹列表（传递 parentId 参数）
-    const foldersRes = await axios.get(folderId 
-      ? `http://localhost:3000/folders?parentId=${folderId}`
-      : 'http://localhost:3000/folders?parentId=null'
-    );
-
-    // 处理文件夹数据
-    const folders = foldersRes.data.code === 200 
-      ? foldersRes.data.data.map((folder: any) => ({
-          id: folder.id || folder._id,
-          name: folder.name,
-          type: 'folder',
-          size: '0 KB',
-          time: ''
-        }))
-      : [];
+    // 分类模式下不获取文件夹，目录模式下获取文件夹
+    let folders: any[] = [];
+    if (!category || category === 'all') {
+      const foldersRes = await axios.get(folderId
+        ? `${API_BASE}/folders?parentId=${folderId}`
+        : `${API_BASE}/folders?parentId=null`
+      );
+      folders = foldersRes.data.code === 200
+        ? foldersRes.data.data.map((folder: any) => ({
+            id: folder.id || folder._id,
+            name: folder.name,
+            type: 'folder',
+            size: '0 KB',
+            time: ''
+          }))
+        : [];
+    }
 
     // 处理文件数据
-    const files = filesRes.data.code === 200 
+    const files = filesRes.data.code === 200
       ? filesRes.data.data.map((file: any) => ({
           ...file,
           type: 'file'
@@ -290,39 +352,24 @@ const getFileList = async (folderId?: string | null) => {
 
     // 合并并排序（文件夹优先）
     container.fileList = [...folders, ...files];
+    sortFileList();
     calculateStorage();
   } catch (error) {
     console.error('获取列表失败:', error);
-    // 失败时只获取文件
-    const res = await axios.get(folderId 
-      ? `http://localhost:3000/files?folderId=${folderId}`
-      : 'http://localhost:3000/files'
-    );
-    if (res.data.code === 200) {
-      container.fileList = res.data.data.map((file: any) => ({
-        ...file,
-        type: 'file'
-      }));
-      calculateStorage();
-    }
   }
 };
 
 // 进入文件夹
 const enterFolder = async (folder: any) => {
+  // 从分类或搜索模式进入文件夹时，退出特殊模式
+  if (isCategoryMode.value || isSearchMode.value) {
+    currentCategory.value = 'all';
+    searchKeyword.value = '';
+    currentPath.value = [{ id: null, name: '全部文件' }];
+  }
   currentFolderId.value = folder.id;
   currentPath.value.push({ id: folder.id, name: folder.name });
   await getFileList(folder.id);
-};
-
-// 返回上级
-const goBack = async () => {
-  if (currentPath.value.length > 1) {
-    currentPath.value.pop();
-    const lastPath = currentPath.value[currentPath.value.length - 1];
-    currentFolderId.value = lastPath.id;
-    await getFileList(lastPath.id);
-  }
 };
 
 // 跳转到指定路径
@@ -354,11 +401,93 @@ const calculateStorage = () => {
   }
 };
 
+// 刷新文件列表
+const handleRefresh = async () => {
+  refreshing.value = true;
+  selectedIds.value = [];
+  await new Promise(r => setTimeout(r, 500));
+  await refreshFileList();
+  refreshing.value = false;
+};
+
+// 搜索
+const handleSearch = async (keyword: string) => {
+  if (!keyword) return;
+  searchKeyword.value = keyword;
+  currentCategory.value = 'all';
+  currentFolderId.value = null;
+  currentPath.value = [{ id: null, name: `搜索结果："${keyword}"` }];
+  selectedIds.value = [];
+  try {
+    const res = await axios.get(`${API_BASE}/search?q=${encodeURIComponent(keyword)}`);
+    container.fileList = res.data.code === 200 ? res.data.data : [];
+    sortFileList();
+    calculateStorage();
+  } catch (error) {
+    console.error('搜索失败:', error);
+    container.fileList = [];
+  }
+};
+
+// 退出搜索
+const exitSearch = () => {
+  searchKeyword.value = '';
+  currentCategory.value = 'all';
+  currentFolderId.value = null;
+  currentPath.value = [{ id: null, name: '全部文件' }];
+  getFileList();
+};
+
+// 统一刷新：根据当前模式拉取数据
+const refreshFileList = () => {
+  if (isSearchMode.value) {
+    return handleSearch(searchKeyword.value);
+  }
+  if (isCategoryMode.value) {
+    return getFileList(null, currentCategory.value);
+  }
+  return getFileList(currentFolderId.value);
+};
+
+// 重命名
+const handleStartRename = (id: string) => {
+  renamingId.value = id;
+};
+
+const handleConfirmRename = async (newName: string) => {
+  if (!renamingId.value || !newName.trim()) {
+    renamingId.value = null;
+    return;
+  }
+  try {
+    const file = container.fileList.find(f => f.id === renamingId.value);
+    if (!file) return;
+    if (file.type === 'folder') {
+      await axios.patch(`${API_BASE}/folders/${renamingId.value}/rename`, { newName: newName.trim() });
+    } else {
+      await axios.patch(`${API_BASE}/files/${renamingId.value}/rename`, { newName: newName.trim() });
+    }
+    await refreshFileList();
+  } catch (error: any) {
+    alert(error.response?.data?.msg || '重命名失败');
+  } finally {
+    renamingId.value = null;
+  }
+};
+
+const handleCancelRename = () => {
+  renamingId.value = null;
+};
+
 // 导航切换
-const handleNavChange = (nav: string) => {
+const handleNavChange = async (nav: string) => {
   currentNav.value = nav;
   if (nav === 'all') {
-    getFileList();
+    searchKeyword.value = '';
+    currentCategory.value = 'all';
+    currentFolderId.value = null;
+    currentPath.value = [{ id: null, name: '全部文件' }];
+    await getFileList();
   }
 };
 
@@ -371,7 +500,45 @@ const handleViewChange = (view: string) => {
 
 // 排序切换
 const handleSortChange = (sort: string) => {
-  console.log('排序:', sort);
+  sortBy.value = sort;
+  sortFileList();
+};
+
+// 解析大小字符串为 MB 数值
+const parseSize = (sizeStr: string): number => {
+  const match = sizeStr.match(/([\d.]+)\s*(MB|GB|KB)/i);
+  if (!match) return 0;
+  const num = parseFloat(match[1]);
+  const unit = match[2].toUpperCase();
+  if (unit === 'GB') return num * 1024;
+  if (unit === 'KB') return num / 1024;
+  return num;
+};
+
+// 排序文件列表（文件夹始终在前）
+const sortFileList = () => {
+  const folders = container.fileList.filter(f => f.type === 'folder');
+  const files = container.fileList.filter(f => f.type !== 'folder');
+
+  files.sort((a, b) => {
+    switch (sortBy.value) {
+      case 'name-asc':
+        return a.name.localeCompare(b.name, 'zh');
+      case 'name-desc':
+        return b.name.localeCompare(a.name, 'zh');
+      case 'size-asc':
+        return parseSize(a.size) - parseSize(b.size);
+      case 'size-desc':
+        return parseSize(b.size) - parseSize(a.size);
+      case 'time-asc':
+        return new Date(a.time).getTime() - new Date(b.time).getTime();
+      case 'time-desc':
+      default:
+        return new Date(b.time).getTime() - new Date(a.time).getTime();
+    }
+  });
+
+  container.fileList = [...folders, ...files];
 };
 
 // 选择变化
@@ -383,6 +550,65 @@ const handleSelectChange = (ids: string[]) => {
 const handleUploadClick = () => {
   const input = document.getElementById('file-input') as HTMLInputElement;
   input?.click();
+};
+
+// 拖拽上传
+const onDocDragEnter = (e: DragEvent) => {
+  if (!isLoggedIn.value) return;
+  if (e.dataTransfer?.types?.includes('Files')) {
+    isDragging.value = true;
+  }
+};
+
+const onDocDragLeave = (e: DragEvent) => {
+  if (!isLoggedIn.value) return;
+  if (e.relatedTarget === null) {
+    isDragging.value = false;
+  }
+};
+
+const onDocDragOver = (e: DragEvent) => {
+  e.preventDefault();
+};
+
+const onDocDrop = (e: DragEvent) => {
+  e.preventDefault();
+  isDragging.value = false;
+  if (!isLoggedIn.value) return;
+
+  const files = e.dataTransfer?.files;
+  if (!files || files.length === 0) return;
+
+  // 检查文件大小
+  const oversized: string[] = [];
+  const validFiles: File[] = [];
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    if (f.size > MAX_FILE_SIZE) {
+      oversized.push(f.name);
+    } else {
+      validFiles.push(f);
+    }
+  }
+
+  if (oversized.length > 0) {
+    alert(`以下文件超过 5GB 限制，已跳过：\n${oversized.join('\n')}`);
+  }
+
+  if (validFiles.length > 0) {
+    uploadFileList(validFiles);
+  }
+};
+
+// 多文件队列上传
+const uploadFileList = async (fileList: File[]) => {
+  for (const file of fileList) {
+    container.file = file;
+    container.isShowProgress = true;
+    container.uploadProgress = 0;
+    container.uploading = false;
+    await handleUpload();
+  }
 };
 
 // 暂停/继续
@@ -423,12 +649,12 @@ const confirmCreateFolder = async (name: string) => {
   }
   
   try {
-    await axios.post('http://localhost:3000/folders', {
+    await axios.post(`${API_BASE}/folders`, {
       name: name,
       parentId: currentFolderId.value || null
     });
     // 重新获取列表
-    await getFileList(currentFolderId.value);
+    await refreshFileList();
   } catch (error) {
     alert('创建失败');
     container.fileList.shift();
@@ -454,7 +680,7 @@ const handleBatchDelete = () => {
 
 // 查询后端已上传的分片
 const checkUploadedChunks = async (fileName: string) => {
-  const res = await axios.get(`http://localhost:3000/check-chunks/${encodeURIComponent(fileName)}`);
+  const res = await axios.get(`${API_BASE}/check-chunks/${encodeURIComponent(fileName)}`);
   return res.data.data || [];
 };
 
@@ -518,12 +744,12 @@ const handleUpload = async () => {
       form.append('file', chunk);
       form.append('name', `${container.file!.name}-${index}`);
       
-      await axios.post('http://localhost:3000/upload', form);
+      await axios.post(`${API_BASE}/upload`, form);
       success++;
       updateProgress();
     }
 
-    await axios.post('http://localhost:3000/merge', {
+    await axios.post(`${API_BASE}/merge`, {
       fileName: container.file.name,
       folderId: currentFolderId.value || null
     });
@@ -534,7 +760,7 @@ const handleUpload = async () => {
       container.uploadProgress = 0;
       container.uploading = false;
       container.file = null;
-      getFileList(currentFolderId.value);
+      refreshFileList();
     }, 500);
 
   } catch (error) {
@@ -558,7 +784,7 @@ const handlePreview = async (file: any) => {
 
     const token = localStorage.getItem('token');
     const response = await fetch(
-      `http://localhost:3000/target/${encodeURIComponent(file.name)}`,
+      `${API_BASE}/target/${encodeURIComponent(file.name)}`,
       {
         headers: {
           Authorization: `Bearer ${token}`
@@ -587,7 +813,7 @@ const handleDownload = async (file: any) => {
   try {
     const token = localStorage.getItem('token');
     const response = await axios.get(
-      `http://localhost:3000/download/${encodeURIComponent(file.name)}`,
+      `${API_BASE}/download/${encodeURIComponent(file.name)}`,
       {
         responseType: 'blob',  // 必须设置响应类型为 blob
         headers: {
@@ -617,12 +843,12 @@ const handleDelete = async (item: any) => {
   try {
     if (item.type === 'folder') {
       // 删除文件夹
-      await axios.delete(`http://localhost:3000/folders/${item.id}`);
+      await axios.delete(`${API_BASE}/folders/${item.id}`);
     } else {
       // 删除文件
-      await axios.delete(`http://localhost:3000/delete/${encodeURIComponent(item.name)}`);
+      await axios.delete(`${API_BASE}/delete/${encodeURIComponent(item.name)}`);
     }
-    getFileList();
+    refreshFileList();
   } catch (error) {
     console.error('删除失败:', error);
     alert('删除失败');
@@ -632,6 +858,17 @@ const handleDelete = async (item: any) => {
 // 页面初始化
 onMounted(() => {
   checkLogin();
+  document.addEventListener('dragenter', onDocDragEnter);
+  document.addEventListener('dragleave', onDocDragLeave);
+  document.addEventListener('dragover', onDocDragOver);
+  document.addEventListener('drop', onDocDrop);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('dragenter', onDocDragEnter);
+  document.removeEventListener('dragleave', onDocDragLeave);
+  document.removeEventListener('dragover', onDocDragOver);
+  document.removeEventListener('drop', onDocDrop);
 });
 </script>
 
@@ -644,7 +881,7 @@ onMounted(() => {
 }
 
 .app {
-  min-height: 100vh;
+  height: 100%;
   background: #F5F7FA;
 }
 
@@ -664,6 +901,31 @@ onMounted(() => {
   flex: 1;
   overflow-y: auto;
   background: #F5F7FA;
+  position: relative;
+}
+
+.refresh-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  color: #999;
+  font-size: 14px;
+}
+
+.refresh-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #E5E6EB;
+  border-top-color: #4A90D9;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .breadcrumb {
@@ -772,5 +1034,123 @@ onMounted(() => {
 
 .progress-pause-btn:hover {
   background: #E5E6EB;
+}
+
+.settings-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.settings-dialog {
+  background: white;
+  border-radius: 12px;
+  width: 420px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+}
+
+.settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.settings-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.settings-close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: #999;
+}
+
+.settings-body {
+  padding: 20px;
+}
+
+.settings-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.settings-item:last-child {
+  border-bottom: none;
+}
+
+.settings-label {
+  font-size: 14px;
+  color: #666;
+}
+
+.settings-value {
+  font-size: 14px;
+  color: #333;
+}
+
+.settings-footer {
+  padding: 12px 20px;
+  border-top: 1px solid #e8e8e8;
+  text-align: right;
+}
+
+.settings-btn {
+  padding: 6px 20px;
+  background: #4A90D9;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.settings-btn:hover {
+  background: #357ABD;
+}
+
+.drag-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(74, 144, 217, 0.15);
+  border: 3px dashed #4A90D9;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.drag-overlay-content {
+  text-align: center;
+}
+
+.drag-icon {
+  font-size: 64px;
+  margin-bottom: 16px;
+}
+
+.drag-text {
+  font-size: 20px;
+  color: #4A90D9;
+  font-weight: 500;
 }
 </style>
