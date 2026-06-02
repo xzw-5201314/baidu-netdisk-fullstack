@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const FileSchema = new mongoose.Schema({
+const UserFileSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -10,15 +10,12 @@ const FileSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-  filePath: {
-    type: String,
+  fileRecordId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'FileRecord',
     required: true
   },
-  fileSize: {
-    type: Number,
-    required: true
-  },
-  folderId: { // 新增字段：所属文件夹
+  folderId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Folder',
     default: null
@@ -29,4 +26,4 @@ const FileSchema = new mongoose.Schema({
   }
 });
 
-module.exports = mongoose.model('File', FileSchema);
+module.exports = mongoose.model('UserFile', UserFileSchema, 'files');

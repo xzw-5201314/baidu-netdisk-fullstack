@@ -10,7 +10,8 @@ const bcrypt = require('bcryptjs');
 // 导入数据库连接和模型
 const connectDB = require('./config/db');
 const User = require('./models/User');
-const File = require('./models/File');
+const UserFile = require('./models/File');
+const FileRecord = require('./models/FileRecord');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRE = process.env.JWT_EXPIRE;
@@ -42,8 +43,8 @@ const ensureUserDirs = (userId) => {
 const PORT = process.env.PORT || 3000;
 // JWT验证中间件
 const auth = (req, res, next) => {
-  // 从请求头获取Token
-  const token = req.header('Authorization')?.replace('Bearer ', '');
+  // 从请求头或 query 参数获取 Token
+  const token = req.header('Authorization')?.replace('Bearer ', '') || req.query.token;
 
   if (!token) {
     return res.status(401).json({ code: 401, msg: '未授权，请先登录' });
@@ -134,13 +135,19 @@ app.get('/verify', auth, (req, res) => {
 // 动态文件预览接口（支持用户隔离）
 app.get('/target/:fileName', auth, async (req, res) => {
   const { fileName } = req.params;
-  const { targetDir } = ensureUserDirs(req.user.id);
-  const filePath = path.resolve(targetDir, decodeURIComponent(fileName));
+  const decodedName = decodeURIComponent(fileName);
 
   try {
-    if (!fse.existsSync(filePath)) {
+    // 通过 UserFile → FileRecord 找到真实文件路径
+    const userFile = await UserFile.findOne({ userId: req.user.id, fileName: decodedName });
+    if (!userFile) {
       return res.status(404).json({ code: 404, msg: '文件不存在' });
     }
+    const record = await FileRecord.findById(userFile.fileRecordId);
+    if (!record || !fse.existsSync(record.filePath)) {
+      return res.status(404).json({ code: 404, msg: '文件不存在' });
+    }
+    const filePath = record.filePath;
 
     const ext = path.extname(fileName).toLowerCase();
     const contentTypeMap = {
@@ -231,7 +238,7 @@ app.post('/upload', auth, (req, res) => {
 
 app.post('/merge', auth, async (req, res) => {
   try {
-    const { fileName, folderId } = req.body;
+    const { fileName, folderId, fileHash } = req.body;
     const { targetDir, uploadDir } = ensureUserDirs(req.user.id);
     const chunkDir = uploadDir;
     const targetPath = path.resolve(targetDir, fileName);
@@ -251,11 +258,16 @@ app.post('/merge', auth, async (req, res) => {
 
     // 保存文件记录到数据库
     const stats = await fse.stat(targetPath);
-    await File.create({
-      userId: req.user.id,
-      fileName,
+    const fileRecord = await FileRecord.create({
+      fileHash: fileHash || '',
       filePath: targetPath,
       fileSize: stats.size,
+      referenceCount: 1
+    });
+    await UserFile.create({
+      userId: req.user.id,
+      fileName,
+      fileRecordId: fileRecord._id,
       folderId: folderId || null
     });
 
@@ -286,7 +298,7 @@ app.get('/files', auth, async (req, res) => {
 
     if (category && category !== 'all') {
       // 分类模式：查询用户全部文件，按扩展名过滤，不区分文件夹
-      dbFiles = await File.find({ userId: req.user.id });
+      dbFiles = await UserFile.find({ userId: req.user.id }).populate('fileRecordId');
 
       if (category === 'other') {
         const allExts = Object.values(categoryMap).flat();
@@ -309,13 +321,15 @@ app.get('/files', auth, async (req, res) => {
       } else {
         query.folderId = null;
       }
-      dbFiles = await File.find(query);
+      dbFiles = await UserFile.find(query).populate('fileRecordId');
     }
 
     const fileList = (await Promise.all(
       dbFiles.map(async (dbFile) => {
         try {
-          const stats = await fse.stat(dbFile.filePath);
+          const record = dbFile.fileRecordId;
+          if (!record) return null;
+          const stats = await fse.stat(record.filePath);
           return {
             id: dbFile._id.toString(),
             name: dbFile.fileName,
@@ -338,13 +352,19 @@ app.get('/files', auth, async (req, res) => {
 // 下载接口
 app.get('/download/:fileName', auth, async (req, res) => {
   const { fileName } = req.params;
-  const { targetDir } = ensureUserDirs(req.user.id);
-  const filePath = path.resolve(targetDir, fileName);
+  const decodedName = decodeURIComponent(fileName);
 
   try {
-    if (!fse.existsSync(filePath)) {
+    // 通过 UserFile → FileRecord 找到真实文件路径
+    const userFile = await UserFile.findOne({ userId: req.user.id, fileName: decodedName });
+    if (!userFile) {
       return res.status(404).json({ code: 404, msg: '文件不存在' });
     }
+    const record = await FileRecord.findById(userFile.fileRecordId);
+    if (!record || !fse.existsSync(record.filePath)) {
+      return res.status(404).json({ code: 404, msg: '文件不存在' });
+    }
+    const filePath = record.filePath;
 
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
     res.setHeader('Content-Type', 'application/octet-stream');
@@ -360,17 +380,30 @@ app.get('/download/:fileName', auth, async (req, res) => {
 // 删除接口
 app.delete('/delete/:fileName', auth, async (req, res) => {
   const { fileName } = req.params;
-  const { targetDir } = ensureUserDirs(req.user.id);
-  const targetPath = path.resolve(targetDir, fileName);
 
   try {
-    if (fse.existsSync(targetPath)) {
-      await fse.unlink(targetPath);
-      await File.deleteOne({ userId: req.user.id, fileName });
-      res.json({ code: 200, msg: '删除成功' });
-    } else {
-      res.status(404).json({ code: 404, msg: '文件不存在' });
+    const userFile = await UserFile.findOne({ userId: req.user.id, fileName });
+    if (!userFile) {
+      return res.status(404).json({ code: 404, msg: '文件不存在' });
     }
+
+    const record = await FileRecord.findById(userFile.fileRecordId);
+    await UserFile.deleteOne({ _id: userFile._id });
+
+    if (record) {
+      record.referenceCount -= 1;
+      if (record.referenceCount <= 0) {
+        // 无人引用，物理删除
+        if (fse.existsSync(record.filePath)) {
+          await fse.unlink(record.filePath);
+        }
+        await FileRecord.deleteOne({ _id: record._id });
+      } else {
+        await record.save();
+      }
+    }
+
+    res.json({ code: 200, msg: '删除成功' });
   } catch (error) {
     res.status(500).json({ code: 500, msg: '删除失败' });
   }
@@ -412,7 +445,7 @@ app.get('/folders', auth, async (req, res) => {
 
     // 如果没有 parentId 参数，返回树结构和所有文件
     if (parentId === undefined) {
-      const files = await File.find({ userId: req.user.id });
+      const files = await UserFile.find({ userId: req.user.id }).populate('fileRecordId');
 
       // 构建树结构
       const buildTree = (pid = null) => {
@@ -437,7 +470,7 @@ app.get('/folders', auth, async (req, res) => {
           files: files.map(f => ({
             id: f._id.toString(),
             name: f.fileName,
-            size: f.fileSize,
+            size: f.fileRecordId?.fileSize || 0,
             folderId: f.folderId?.toString() || null,
             createdAt: f.createdAt
           }))
@@ -493,7 +526,24 @@ app.delete('/folders/:id', auth, async (req, res) => {
         await deleteFolder(sub._id);
       }
       await Folder.deleteOne({ _id: folderId });
-      await File.deleteMany({ folderId });
+
+      // 处理该文件夹下的所有用户文件，更新引用计数
+      const userFiles = await UserFile.find({ folderId });
+      for (const uf of userFiles) {
+        const record = await FileRecord.findById(uf.fileRecordId);
+        if (record) {
+          record.referenceCount -= 1;
+          if (record.referenceCount <= 0) {
+            if (fse.existsSync(record.filePath)) {
+              await fse.unlink(record.filePath);
+            }
+            await FileRecord.deleteOne({ _id: record._id });
+          } else {
+            await record.save();
+          }
+        }
+      }
+      await UserFile.deleteMany({ folderId });
     };
 
     await deleteFolder(id);
@@ -508,7 +558,7 @@ app.post('/files/move', auth, async (req, res) => {
   try {
     const { fileId, folderId } = req.body;
 
-    await File.findByIdAndUpdate(fileId, { folderId: folderId || null });
+    await UserFile.findByIdAndUpdate(fileId, { folderId: folderId || null });
     res.json({ code: 200, msg: '移动成功' });
   } catch (error) {
     res.status(500).json({ code: 500, msg: '移动失败' });
@@ -579,13 +629,14 @@ app.patch('/files/:id/rename', auth, async (req, res) => {
       return res.status(400).json({ code: 400, msg: '文件名不能为空' });
     }
 
-    const file = await File.findOne({ _id: id, userId: req.user.id });
+    const file = await UserFile.findOne({ _id: id, userId: req.user.id }).populate('fileRecordId');
     if (!file) {
       return res.status(404).json({ code: 404, msg: '文件不存在' });
     }
 
     const { targetDir } = ensureUserDirs(req.user.id);
-    const oldPath = file.filePath;
+    const record = file.fileRecordId;
+    const oldPath = record.filePath;
     const newPath = path.resolve(targetDir, newName.trim());
 
     if (fse.existsSync(newPath)) {
@@ -594,8 +645,9 @@ app.patch('/files/:id/rename', auth, async (req, res) => {
 
     await fse.move(oldPath, newPath);
     file.fileName = newName.trim();
-    file.filePath = newPath;
     await file.save();
+    record.filePath = newPath;
+    await record.save();
 
     res.json({ code: 200, msg: '重命名成功' });
   } catch (error) {
@@ -640,6 +692,113 @@ app.patch('/folders/:id/rename', auth, async (req, res) => {
   }
 });
 
+// 秒传：检查文件 hash 是否已存在
+app.post('/check-hash', auth, async (req, res) => {
+  try {
+    const { fileHash, fileName, fileSize, folderId } = req.body;
+
+    if (!fileHash) {
+      return res.json({ code: 200, data: { exists: false } });
+    }
+
+    const existingRecord = await FileRecord.findOne({ fileHash });
+
+    if (existingRecord) {
+      // 验证物理文件是否真的存在
+      if (!fse.existsSync(existingRecord.filePath)) {
+        // 物理文件已不存在，清理残留记录
+        await FileRecord.deleteOne({ _id: existingRecord._id });
+        return res.json({ code: 200, data: { exists: false } });
+      }
+
+      // 物理文件已存在，创建用户文件引用
+      existingRecord.referenceCount += 1;
+      await existingRecord.save();
+
+      await UserFile.create({
+        userId: req.user.id,
+        fileName,
+        fileRecordId: existingRecord._id,
+        folderId: folderId || null
+      });
+
+      return res.json({ code: 200, data: { exists: true } });
+    }
+
+    res.json({ code: 200, data: { exists: false } });
+  } catch (error) {
+    console.error('检查hash失败:', error);
+    res.status(500).json({ code: 500, msg: '检查失败' });
+  }
+});
+
+// 文件预览/下载接口（通过 fileId 查找，支持 Range 流式播放）
+app.get('/api/file/preview', auth, async (req, res) => {
+  try {
+    const { fileId } = req.query;
+    if (!fileId) {
+      return res.status(400).json({ code: 400, msg: '缺少 fileId' });
+    }
+
+    const userFile = await UserFile.findOne({ _id: fileId, userId: req.user.id });
+    if (!userFile) {
+      return res.status(404).json({ code: 404, msg: '文件不存在' });
+    }
+
+    const record = await FileRecord.findById(userFile.fileRecordId);
+    if (!record || !fse.existsSync(record.filePath)) {
+      return res.status(404).json({ code: 404, msg: '文件不存在' });
+    }
+
+    const filePath = record.filePath;
+    const ext = path.extname(userFile.fileName).toLowerCase();
+    const contentTypeMap = {
+      '.mp4': 'video/mp4',
+      '.mov': 'video/quicktime',
+      '.avi': 'video/x-msvideo',
+      '.webm': 'video/webm',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.pdf': 'application/pdf',
+      '.txt': 'text/plain; charset=utf-8',
+      '.mp3': 'audio/mpeg',
+      '.wav': 'audio/wav',
+      '.ogg': 'audio/ogg',
+      '.flac': 'audio/flac'
+    };
+
+    const stat = fse.statSync(filePath);
+    const fileSize = stat.size;
+    const contentType = contentTypeMap[ext] || 'application/octet-stream';
+    const range = req.headers.range;
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunksize = (end - start) + 1;
+      const fileStream = fse.createReadStream(filePath, { start, end });
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunksize,
+        'Content-Type': contentType,
+      });
+      fileStream.pipe(res);
+    } else {
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Length', fileSize);
+      res.setHeader('Accept-Ranges', 'bytes');
+      fse.createReadStream(filePath).pipe(res);
+    }
+  } catch (error) {
+    console.error('预览失败:', error);
+    res.status(500).json({ code: 500, msg: '预览失败' });
+  }
+});
+
 // 搜索文件
 app.get('/search', auth, async (req, res) => {
   try {
@@ -652,10 +811,10 @@ app.get('/search', auth, async (req, res) => {
     const regex = new RegExp(keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 
     // 搜索文件
-    const files = await File.find({
+    const files = await UserFile.find({
       userId: req.user.id,
       fileName: regex
-    });
+    }).populate('fileRecordId');
 
     // 搜索文件夹
     const folders = await Folder.find({
@@ -666,7 +825,9 @@ app.get('/search', auth, async (req, res) => {
     const fileList = await Promise.all(
       files.map(async (dbFile) => {
         try {
-          const stats = await fse.stat(dbFile.filePath);
+          const record = dbFile.fileRecordId;
+          if (!record) return null;
+          const stats = await fse.stat(record.filePath);
           return {
             id: dbFile._id.toString(),
             name: dbFile.fileName,

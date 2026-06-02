@@ -131,20 +131,28 @@
     <div v-if="container.isShowProgress" class="progress-overlay">
       <div class="progress-modal">
         <div class="progress-header">
-          <span>上传中...</span>
+          <span>{{ isCalculatingHash ? '正在校验文件...' : '上传中...' }}</span>
           <button class="progress-close" @click="cancelUpload">✕</button>
         </div>
-        <div class="progress-bar-container">
-          <div class="progress-bar-fill" :style="{ width: container.uploadProgress + '%' }"></div>
+        <div v-if="isCalculatingHash" class="hash-checking">
+          <div class="progress-bar-container">
+            <div class="progress-bar-fill" :style="{ width: hashProgress + '%' }"></div>
+          </div>
+          <span>正在计算文件指纹... {{ hashProgress }}%</span>
         </div>
-        <div class="progress-text">{{ container.uploadProgress }}%</div>
-        <button 
-          v-if="container.uploading"
-          @click="togglePause"
-          class="progress-pause-btn"
-        >
-          {{ container.isPaused ? '继续上传' : '暂停上传' }}
-        </button>
+        <template v-else>
+          <div class="progress-bar-container">
+            <div class="progress-bar-fill" :style="{ width: container.uploadProgress + '%' }"></div>
+          </div>
+          <div class="progress-text">{{ container.uploadProgress }}%</div>
+          <button
+            v-if="container.uploading"
+            @click="togglePause"
+            class="progress-pause-btn"
+          >
+            {{ container.isPaused ? '继续上传' : '暂停上传' }}
+          </button>
+        </template>
       </div>
     </div>
 
@@ -190,6 +198,38 @@ const renamingId = ref<string | null>(null);
 // 拖拽上传状态
 const isDragging = ref(false);
 const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB
+const fileHash = ref('');
+const isCalculatingHash = ref(false);
+const hashProgress = ref(0);
+
+// 计算文件 MD5 hash（Web Worker 后台计算，不阻塞主线程）
+const calculateFileHash = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(
+      new URL('./workers/hash.worker.ts', import.meta.url),
+      { type: 'module' }
+    );
+
+    worker.onmessage = (e: MessageEvent) => {
+      if (e.data.type === 'progress') {
+        hashProgress.value = Math.round((e.data.current / e.data.total) * 100);
+      } else if (e.data.type === 'done') {
+        worker.terminate();
+        resolve(e.data.hash);
+      } else if (e.data.type === 'error') {
+        worker.terminate();
+        reject(new Error(e.data.message));
+      }
+    };
+
+    worker.onerror = (err) => {
+      worker.terminate();
+      reject(err);
+    };
+
+    worker.postMessage(file);
+  });
+};
 const sortBy = ref('time-desc');
 
 // 搜索状态
@@ -607,7 +647,7 @@ const uploadFileList = async (fileList: File[]) => {
     container.isShowProgress = true;
     container.uploadProgress = 0;
     container.uploading = false;
-    await handleUpload();
+    await handleUploadWithHash();
   }
 };
 
@@ -622,6 +662,9 @@ const cancelUpload = () => {
   container.uploading = false;
   container.isPaused = false;
   container.uploadProgress = 0;
+  fileHash.value = '';
+  isCalculatingHash.value = false;
+  hashProgress.value = 0;
 };
 
 // 创建文件夹（内联模式）
@@ -712,8 +755,52 @@ const handleFileChange = async (e: Event) => {
     container.file = target.files[0];
     container.isShowProgress = true;
     container.uploadProgress = 0;
-    await handleUpload();
+    await handleUploadWithHash();
   }
+};
+
+// 带秒传检查的上传流程
+const handleUploadWithHash = async () => {
+  if (!container.file) return;
+
+  // 1. 计算文件 hash
+  isCalculatingHash.value = true;
+  try {
+    fileHash.value = await calculateFileHash(container.file);
+  } catch {
+    fileHash.value = '';
+  }
+  isCalculatingHash.value = false;
+  hashProgress.value = 0;
+
+  // 2. 检查是否可以秒传
+  if (fileHash.value) {
+    try {
+      const res = await axios.post(`${API_BASE}/check-hash`, {
+        fileHash: fileHash.value,
+        fileName: container.file.name,
+        fileSize: container.file.size,
+        folderId: currentFolderId.value || null
+      });
+      if (res.data.data?.exists) {
+        container.uploadProgress = 100;
+        setTimeout(() => {
+          container.isShowProgress = false;
+          container.uploadProgress = 0;
+          container.uploading = false;
+          container.file = null;
+          fileHash.value = '';
+          refreshFileList();
+        }, 500);
+        return;
+      }
+    } catch {
+      // 秒传检查失败，继续正常上传
+    }
+  }
+
+  // 3. 正常上传
+  await handleUpload();
 };
 
 // 上传逻辑
@@ -751,7 +838,8 @@ const handleUpload = async () => {
 
     await axios.post(`${API_BASE}/merge`, {
       fileName: container.file.name,
-      folderId: currentFolderId.value || null
+      folderId: currentFolderId.value || null,
+      fileHash: fileHash.value || ''
     });
 
     container.uploadProgress = 100;
@@ -760,6 +848,7 @@ const handleUpload = async () => {
       container.uploadProgress = 0;
       container.uploading = false;
       container.file = null;
+      fileHash.value = '';
       refreshFileList();
     }, 500);
 
@@ -768,44 +857,72 @@ const handleUpload = async () => {
     alert('上传失败！');
     container.isShowProgress = false;
     container.uploading = false;
+    fileHash.value = '';
   }
 };
 
 // 预览文件
-const handlePreview = async (file: any) => {
-  try {
-    // 检查是否支持预览的文件类型
-    const supportedExtensions = ['mp4', 'mov', 'avi', 'png', 'jpg', 'jpeg', 'gif', 'pdf', 'mp3', 'wav', 'ogg', 'flac'];
-    const ext = file.name.split('.').pop()?.toLowerCase() || '';
-    if (!supportedExtensions.includes(ext)) {
-      alert(`「${file.name}」\n\n提示：该文件类型不支持在线预览`);
-      return;
-    }
+const handlePreview = (file: any) => {
+  const ext = file.name.split('.').pop()?.toLowerCase() || '';
+  const token = localStorage.getItem('token');
 
-    const token = localStorage.getItem('token');
-    const response = await fetch(
-      `${API_BASE}/target/${encodeURIComponent(file.name)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error('文件获取失败');
-    }
-
-    // 使用流式传输，浏览器自动处理边下载边播放
-    const blob = await response.blob();
-    
-    const url = window.URL.createObjectURL(blob);
-    window.open(url, '_blank');
-
-  } catch (error) {
-    console.error('预览失败:', error);
-    alert('预览失败');
+  if (!token) {
+    alert('登录已失效，请重新登录');
+    return;
   }
+
+  const url = `${API_BASE}/api/file/preview?fileId=${file.id}&token=${encodeURIComponent(token)}`;
+
+  // 视频
+  if (['mp4', 'mov', 'avi', 'webm'].includes(ext)) {
+    openPreviewModal(`<video controls autoplay style="max-width:100%;max-height:85vh" src="${url}"></video>`);
+  }
+  // 图片
+  else if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(ext)) {
+    openPreviewModal(`<img src="${url}" style="max-width:100%;max-height:85vh;object-fit:contain" />`);
+  }
+  // PDF
+  else if (ext === 'pdf') {
+    openPreviewModal(`<iframe src="${url}" style="width:100%;height:85vh;border:none"></iframe>`);
+  }
+  // 音频
+  else if (['mp3', 'wav', 'ogg', 'flac'].includes(ext)) {
+    openPreviewModal(`<audio controls autoplay src="${url}"></audio>`);
+  }
+  else {
+    alert(`「${file.name}」\n\n该文件类型不支持在线预览`);
+  }
+};
+
+// 预览弹窗
+const openPreviewModal = (html: string) => {
+  // 移除已有的预览弹窗
+  document.getElementById('preview-modal')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'preview-modal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px';
+  overlay.innerHTML = `
+    <div style="position:relative;max-width:95vw;max-height:95vh">
+      <button id="preview-close-btn" style="position:absolute;top:-36px;right:0;background:none;border:none;color:#fff;font-size:24px;cursor:pointer;z-index:10001">✕ 关闭</button>
+      <div style="text-align:center">${html}</div>
+    </div>
+  `;
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+  document.body.appendChild(overlay);
+
+  document.getElementById('preview-close-btn')?.addEventListener('click', () => overlay.remove());
+
+  // ESC 关闭
+  const onKeydown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      overlay.remove();
+      document.removeEventListener('keydown', onKeydown);
+    }
+  };
+  document.addEventListener('keydown', onKeydown);
 };
 
 // 下载文件
@@ -926,6 +1043,16 @@ onUnmounted(() => {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+.hash-checking {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 0;
+  color: #646A73;
+  font-size: 14px;
 }
 
 .breadcrumb {
