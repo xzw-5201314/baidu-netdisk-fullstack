@@ -8,18 +8,21 @@
       <Header :username="username" :searching="isSearchMode" @logout="handleLogout" @refresh="handleRefresh" @settings="showSettings = true" @search="handleSearch" @exit-search="exitSearch" />
       
       <div class="main-content">
-        <Sidebar 
+        <Sidebar
           :current-nav="currentNav"
           :current-category="currentCategory"
           :used-space="usedSpace"
           :total-space="totalSpace"
           :used-percent="usedPercent"
+          :active-transfer-count="activeTransferCount"
           @nav-change="handleNavChange"
           @category-change="handleCategoryChange"
         />
         
         <main class="content">
-          <Toolbar 
+          <!-- 正常模式工具栏 -->
+          <Toolbar
+            v-if="!isTrashMode && !isTransferMode"
             :selected-count="selectedIds.length"
             :view-mode="viewMode"
             @upload="handleUploadClick"
@@ -28,6 +31,38 @@
             @sort-change="handleSortChange"
             @view-change="handleViewChange"
           />
+          <!-- 回收站工具栏 -->
+          <div v-else-if="isTrashMode" class="toolbar">
+            <div class="toolbar-left">
+              <button class="btn btn-back" @click="handleNavChange('all')">
+                <span class="btn-icon">←</span>
+                <span class="btn-text">返回</span>
+              </button>
+              <button class="btn btn-danger" @click="handleClearTrash">
+                <span class="btn-icon">🗑️</span>
+                <span class="btn-text">清空回收站</span>
+              </button>
+            </div>
+            <div class="toolbar-right">
+              <span class="trash-count">共 {{ trashList.length }} 项</span>
+            </div>
+          </div>
+          <!-- 传输列表工具栏 -->
+          <div v-else-if="isTransferMode" class="toolbar">
+            <div class="toolbar-left">
+              <button class="btn btn-back" @click="handleNavChange('all')">
+                <span class="btn-icon">←</span>
+                <span class="btn-text">返回</span>
+              </button>
+              <button class="btn btn-secondary" @click="handleClearCompleted">
+                <span class="btn-icon">🧹</span>
+                <span class="btn-text">清除已完成</span>
+              </button>
+            </div>
+            <div class="toolbar-right">
+              <span class="trash-count">共 {{ transferList.length }} 项</span>
+            </div>
+          </div>
           
           <!-- 面包屑导航 -->
           <div class="breadcrumb">
@@ -43,35 +78,47 @@
             </div>
           
           <div class="content-body">
-            <div v-if="refreshing" class="refresh-loading">
-              <div class="refresh-spinner"></div>
-              <span>加载中...</span>
-            </div>
+            <!-- 传输列表视图 -->
+            <TransferList
+              v-if="isTransferMode"
+              :transfers="transferList"
+              @remove="handleRemoveTransfer"
+            />
+            <!-- 正常/回收站视图 -->
             <template v-else>
-            <EmptyState
-              v-if="container.fileList.length === 0"
-              :mode="isSearchMode ? 'search' : 'default'"
-              @upload="handleUploadClick"
-              @create-folder="handleCreateFolder"
-            />
-            <FileList
-              v-else
-              :files="displayFiles"
-              :selected-ids="selectedIds"
-              :view-mode="viewMode"
-              :renaming-id="renamingId"
-              @preview="handlePreview"
-              @download="handleDownload"
-              @move="handleMove"
-              @delete="handleDelete"
-              @rename="handleStartRename"
-              @select-change="handleSelectChange"
-              @enter-folder="enterFolder"
-              @confirm-create="confirmCreateFolder"
-              @cancel-create="cancelCreate"
-              @confirm-rename="handleConfirmRename"
-              @cancel-rename="handleCancelRename"
-            />
+              <div v-if="refreshing" class="refresh-loading">
+                <div class="refresh-spinner"></div>
+                <span>加载中...</span>
+              </div>
+              <template v-else>
+              <EmptyState
+                v-if="container.fileList.length === 0"
+                :mode="isSearchMode ? 'search' : 'default'"
+                @upload="handleUploadClick"
+                @create-folder="handleCreateFolder"
+              />
+              <FileList
+                v-else
+                :files="displayFiles"
+                :selected-ids="selectedIds"
+                :view-mode="viewMode"
+                :renaming-id="renamingId"
+                :is-trash-mode="isTrashMode"
+                @preview="handlePreview"
+                @download="handleDownload"
+                @move="handleMove"
+                @delete="handleDelete"
+                @rename="handleStartRename"
+                @select-change="handleSelectChange"
+                @enter-folder="enterFolder"
+                @confirm-create="confirmCreateFolder"
+                @cancel-create="cancelCreate"
+                @confirm-rename="handleConfirmRename"
+                @cancel-rename="handleCancelRename"
+                @restore="handleRestore"
+                @permanent-delete="handlePermanentDelete"
+              />
+              </template>
             </template>
           </div>
         </main>
@@ -128,33 +175,13 @@
     </div>
 
     <!-- 上传进度条 -->
-    <div v-if="container.isShowProgress" class="progress-overlay">
-      <div class="progress-modal">
-        <div class="progress-header">
-          <span>{{ isCalculatingHash ? '正在校验文件...' : '上传中...' }}</span>
-          <button class="progress-close" @click="cancelUpload">✕</button>
-        </div>
-        <div v-if="isCalculatingHash" class="hash-checking">
-          <div class="progress-bar-container">
-            <div class="progress-bar-fill" :style="{ width: hashProgress + '%' }"></div>
-          </div>
-          <span>正在计算文件指纹... {{ hashProgress }}%</span>
-        </div>
-        <template v-else>
-          <div class="progress-bar-container">
-            <div class="progress-bar-fill" :style="{ width: container.uploadProgress + '%' }"></div>
-          </div>
-          <div class="progress-text">{{ container.uploadProgress }}%</div>
-          <button
-            v-if="container.uploading"
-            @click="togglePause"
-            class="progress-pause-btn"
-          >
-            {{ container.isPaused ? '继续上传' : '暂停上传' }}
-          </button>
-        </template>
-      </div>
+    <!-- hash 计算提示（不阻挡操作） -->
+    <div v-if="isCalculatingHash" class="hash-toast">
+      <div class="hash-toast-spinner"></div>
+      <span>校验文件 {{ hashProgress }}%</span>
+      <button class="hash-toast-cancel" @click="cancelUpload">✕</button>
     </div>
+
 
     <!-- 拖拽上传遮罩 -->
     <div v-if="isDragging" class="drag-overlay">
@@ -169,6 +196,7 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted, onUnmounted, computed } from 'vue';
 import axios from 'axios';
+import { ElMessage } from 'element-plus';
 import { API_BASE } from './config/api';
 import Login from './components/Login.vue';
 
@@ -179,6 +207,7 @@ import Toolbar from './components/Toolbar.vue';
 import FileList from './components/FileList.vue';
 import EmptyState from './components/EmptyState.vue';
 import MoveDialog from './components/MoveDialog.vue';
+import TransferList from './components/TransferList.vue';
 
 
 
@@ -201,6 +230,8 @@ const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB
 const fileHash = ref('');
 const isCalculatingHash = ref(false);
 const hashProgress = ref(0);
+let currentWorker: Worker | null = null;
+let uploadCancelled = false;
 
 // 计算文件 MD5 hash（Web Worker 后台计算，不阻塞主线程）
 const calculateFileHash = (file: File): Promise<string> => {
@@ -209,21 +240,26 @@ const calculateFileHash = (file: File): Promise<string> => {
       new URL('./workers/hash.worker.ts', import.meta.url),
       { type: 'module' }
     );
+    currentWorker = worker;
 
     worker.onmessage = (e: MessageEvent) => {
+      if (uploadCancelled) return;
       if (e.data.type === 'progress') {
         hashProgress.value = Math.round((e.data.current / e.data.total) * 100);
       } else if (e.data.type === 'done') {
         worker.terminate();
+        currentWorker = null;
         resolve(e.data.hash);
       } else if (e.data.type === 'error') {
         worker.terminate();
+        currentWorker = null;
         reject(new Error(e.data.message));
       }
     };
 
     worker.onerror = (err) => {
       worker.terminate();
+      currentWorker = null;
       reject(err);
     };
 
@@ -235,6 +271,78 @@ const sortBy = ref('time-desc');
 // 搜索状态
 const searchKeyword = ref('');
 const isSearchMode = computed(() => searchKeyword.value.length > 0);
+
+// 回收站状态
+const trashList = ref<any[]>([]);
+const isTrashMode = computed(() => currentNav.value === 'recycle');
+
+// ==================== 传输列表 ====================
+interface TransferItem {
+  id: string;
+  fileName: string;
+  fileSize: number;
+  type: 'upload' | 'download';
+  status: 'pending' | 'transferring' | 'paused' | 'completed' | 'failed';
+  progress: number;
+  speed: string;
+  startTime: number;
+  endTime?: number;
+}
+
+const STORAGE_KEY = 'easycloud-transfers';
+const MAX_TRANSFER_HISTORY = 100;
+
+// 从 localStorage 加载历史记录
+const loadTransfers = (): TransferItem[] => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+
+const transferList = ref<TransferItem[]>(loadTransfers());
+const isTransferMode = computed(() => currentNav.value === 'transfer');
+const activeTransferCount = computed(() =>
+  transferList.value.filter(t => t.status === 'transferring' || t.status === 'pending').length
+);
+
+// 持久化到 localStorage
+const saveTransfers = () => {
+  // 限制最多 100 条，超出清理最早的
+  if (transferList.value.length > MAX_TRANSFER_HISTORY) {
+    transferList.value = transferList.value.slice(-MAX_TRANSFER_HISTORY);
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(transferList.value));
+};
+
+// 新增传输记录
+const addTransfer = (item: Omit<TransferItem, 'id' | 'startTime' | 'status' | 'progress' | 'speed'>): TransferItem => {
+  const transfer: TransferItem = {
+    ...item,
+    id: 't-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+    status: 'pending',
+    progress: 0,
+    speed: '',
+    startTime: Date.now()
+  };
+  transferList.value.push(transfer);
+  saveTransfers();
+  return transfer;
+};
+
+// 更新传输记录
+const updateTransfer = (id: string, updates: Partial<TransferItem>) => {
+  const item = transferList.value.find(t => t.id === id);
+  if (item) {
+    Object.assign(item, updates);
+    saveTransfers();
+  }
+};
+
+// 当前活跃的上传传输ID（与 container 绑定）
+const currentUploadTransferId = ref<string | null>(null);
 
 
 
@@ -273,10 +381,14 @@ const categoryNameMap: Record<string, string> = {
 const isCategoryMode = computed(() => currentCategory.value !== 'all');
 
 // 3. 过滤后的文件列表（分类过滤已由后端完成）
-const displayFiles = computed(() => container.fileList);
+const displayFiles = computed(() => {
+  if (isTrashMode.value) return trashList.value;
+  return container.fileList;
+});
 
 // 4. 处理分类变化
 const handleCategoryChange = async (category: string) => {
+  currentNav.value = 'all'; // 退出回收站模式
   currentCategory.value = category;
   selectedIds.value = [];
 
@@ -453,6 +565,7 @@ const handleRefresh = async () => {
 // 搜索
 const handleSearch = async (keyword: string) => {
   if (!keyword) return;
+  currentNav.value = 'all'; // 退出回收站模式
   searchKeyword.value = keyword;
   currentCategory.value = 'all';
   currentFolderId.value = null;
@@ -473,6 +586,7 @@ const handleSearch = async (keyword: string) => {
 const exitSearch = () => {
   searchKeyword.value = '';
   currentCategory.value = 'all';
+  currentNav.value = 'all';
   currentFolderId.value = null;
   currentPath.value = [{ id: null, name: '全部文件' }];
   getFileList();
@@ -480,6 +594,12 @@ const exitSearch = () => {
 
 // 统一刷新：根据当前模式拉取数据
 const refreshFileList = () => {
+  if (isTrashMode.value) {
+    return getTrashList();
+  }
+  if (isTransferMode.value) {
+    return; // 传输列表不需要刷新文件列表
+  }
   if (isSearchMode.value) {
     return handleSearch(searchKeyword.value);
   }
@@ -487,6 +607,78 @@ const refreshFileList = () => {
     return getFileList(null, currentCategory.value);
   }
   return getFileList(currentFolderId.value);
+};
+
+// ==================== 回收站方法 ====================
+
+// 获取回收站列表
+const getTrashList = async () => {
+  try {
+    const res = await axios.get(`${API_BASE}/trash`);
+    if (res.data.code === 200) {
+      // 统一字段名：deleteTime → time，方便 FileList 复用显示
+      trashList.value = res.data.data.map((item: any) => ({
+        ...item,
+        time: item.deleteTime || ''
+      }));
+    } else {
+      trashList.value = [];
+    }
+  } catch (error) {
+    console.error('获取回收站失败:', error);
+    trashList.value = [];
+  }
+};
+
+// 还原文件/文件夹
+const handleRestore = async (item: any) => {
+  try {
+    await axios.post(`${API_BASE}/trash/restore/${item.id}`, { type: item.type });
+    ElMessage.success(`"${item.name}" 已还原`);
+    await getTrashList();
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.msg || '还原失败');
+  }
+};
+
+// 彻底删除
+const handlePermanentDelete = async (item: any) => {
+  if (!confirm(`确定彻底删除 "${item.name}" 吗？此操作不可恢复！`)) return;
+  try {
+    await axios.delete(`${API_BASE}/trash/${item.id}?type=${item.type}`);
+    ElMessage.success(`"${item.name}" 已彻底删除`);
+    await getTrashList();
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.msg || '彻底删除失败');
+  }
+};
+
+// 清空回收站
+const handleClearTrash = async () => {
+  if (!confirm('确定清空回收站吗？所有文件将被彻底删除，此操作不可恢复！')) return;
+  try {
+    await axios.delete(`${API_BASE}/trash/clear/all`);
+    ElMessage.success('回收站已清空');
+    await getTrashList();
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.msg || '清空失败');
+  }
+};
+
+// ==================== 传输列表操作 ====================
+
+// 移除单条记录
+const handleRemoveTransfer = (id: string) => {
+  transferList.value = transferList.value.filter(t => t.id !== id);
+  saveTransfers();
+};
+
+// 清除已完成/失败的记录
+const handleClearCompleted = () => {
+  transferList.value = transferList.value.filter(
+    t => t.status !== 'completed' && t.status !== 'failed'
+  );
+  saveTransfers();
 };
 
 // 重命名
@@ -527,7 +719,21 @@ const handleNavChange = async (nav: string) => {
     currentCategory.value = 'all';
     currentFolderId.value = null;
     currentPath.value = [{ id: null, name: '全部文件' }];
+    selectedIds.value = [];
     await getFileList();
+  } else if (nav === 'recycle') {
+    searchKeyword.value = '';
+    currentCategory.value = 'all';
+    currentFolderId.value = null;
+    currentPath.value = [{ id: null, name: '回收站' }];
+    selectedIds.value = [];
+    await getTrashList();
+  } else if (nav === 'transfer') {
+    searchKeyword.value = '';
+    currentCategory.value = 'all';
+    currentFolderId.value = null;
+    currentPath.value = [{ id: null, name: '传输列表' }];
+    selectedIds.value = [];
   }
 };
 
@@ -644,20 +850,24 @@ const onDocDrop = (e: DragEvent) => {
 const uploadFileList = async (fileList: File[]) => {
   for (const file of fileList) {
     container.file = file;
-    container.isShowProgress = true;
     container.uploadProgress = 0;
     container.uploading = false;
     await handleUploadWithHash();
   }
 };
 
-// 暂停/继续
-const togglePause = () => {
-  container.isPaused = !container.isPaused;
-};
-
 // 取消上传
 const cancelUpload = () => {
+  uploadCancelled = true;
+  if (currentWorker) {
+    currentWorker.terminate();
+    currentWorker = null;
+  }
+  // 标记当前传输为失败
+  if (currentUploadTransferId.value) {
+    updateTransfer(currentUploadTransferId.value, { status: 'failed', endTime: Date.now() });
+    currentUploadTransferId.value = null;
+  }
   container.isShowProgress = false;
   container.uploading = false;
   container.isPaused = false;
@@ -710,15 +920,24 @@ const cancelCreate = () => {
 };
 
 // 批量删除
-const handleBatchDelete = () => {
-  if (!confirm(`确定删除选中的 ${selectedIds.value.length} 个文件吗？`)) return;
-  selectedIds.value.forEach(id => {
-    const file = container.fileList.find(f => f.id === id);
-    if (file) {
-      handleDelete({ name: file.name });
+const handleBatchDelete = async () => {
+  if (!confirm(`确定将选中的 ${selectedIds.value.length} 个项目移入回收站吗？`)) return;
+  try {
+    for (const id of selectedIds.value) {
+      const file = container.fileList.find(f => f.id === id);
+      if (!file) continue;
+      if (file.type === 'folder') {
+        await axios.delete(`${API_BASE}/folders/${file.id}`);
+      } else {
+        await axios.delete(`${API_BASE}/delete/${encodeURIComponent(file.name)}`);
+      }
     }
-  });
-  selectedIds.value = [];
+    selectedIds.value = [];
+    await refreshFileList();
+  } catch (error) {
+    console.error('批量删除失败:', error);
+    alert('批量删除失败');
+  }
 };
 
 // 查询后端已上传的分片
@@ -753,15 +972,26 @@ const handleFileChange = async (e: Event) => {
   const target = e.target as HTMLInputElement;
   if (target.files?.[0]) {
     container.file = target.files[0];
-    container.isShowProgress = true;
     container.uploadProgress = 0;
     await handleUploadWithHash();
   }
+  // 重置 input，使连续选同一文件也能触发 change
+  target.value = '';
 };
 
 // 带秒传检查的上传流程
 const handleUploadWithHash = async () => {
   if (!container.file) return;
+  uploadCancelled = false;
+
+  // 创建传输记录
+  const transfer = addTransfer({
+    fileName: container.file.name,
+    fileSize: container.file.size,
+    type: 'upload'
+  });
+  currentUploadTransferId.value = transfer.id;
+  updateTransfer(transfer.id, { status: 'transferring' });
 
   // 1. 计算文件 hash
   isCalculatingHash.value = true;
@@ -773,8 +1003,14 @@ const handleUploadWithHash = async () => {
   isCalculatingHash.value = false;
   hashProgress.value = 0;
 
+  if (uploadCancelled) {
+    updateTransfer(transfer.id, { status: 'failed', endTime: Date.now() });
+    currentUploadTransferId.value = null;
+    return;
+  }
+
   // 2. 检查是否可以秒传
-  if (fileHash.value) {
+  if (fileHash.value && container.file) {
     try {
       const res = await axios.post(`${API_BASE}/check-hash`, {
         fileHash: fileHash.value,
@@ -782,8 +1018,15 @@ const handleUploadWithHash = async () => {
         fileSize: container.file.size,
         folderId: currentFolderId.value || null
       });
+      if (uploadCancelled) {
+        updateTransfer(transfer.id, { status: 'failed', endTime: Date.now() });
+        currentUploadTransferId.value = null;
+        return;
+      }
       if (res.data.data?.exists) {
         container.uploadProgress = 100;
+        updateTransfer(transfer.id, { status: 'completed', progress: 100, endTime: Date.now(), speed: '秒传' });
+        currentUploadTransferId.value = null;
         setTimeout(() => {
           container.isShowProgress = false;
           container.uploadProgress = 0;
@@ -795,20 +1038,27 @@ const handleUploadWithHash = async () => {
         return;
       }
     } catch {
+      if (uploadCancelled) {
+        updateTransfer(transfer.id, { status: 'failed', endTime: Date.now() });
+        currentUploadTransferId.value = null;
+        return;
+      }
       // 秒传检查失败，继续正常上传
     }
   }
 
   // 3. 正常上传
-  await handleUpload();
+  await handleUpload(transfer.id);
 };
 
 // 上传逻辑
-const handleUpload = async () => {
+const handleUpload = async (transferId?: string) => {
   if (!container.file || container.uploading) return;
+  container.isShowProgress = true;
   container.uploading = true;
   container.isPaused = false;
 
+  const startTime = Date.now();
   const chunks = createFileChunks(container.file);
   const uploaded = await checkUploadedChunks(container.file.name);
   const needUpload = chunks.filter((_, i) => !uploaded.includes(i));
@@ -818,19 +1068,39 @@ const handleUpload = async () => {
 
   const updateProgress = () => {
     container.uploadProgress = Math.round((success / total) * 100);
+    // 同步更新传输列表
+    if (transferId) {
+      const elapsed = (Date.now() - startTime) / 1000;
+      const uploadedBytes = (success / total) * container.file!.size;
+      const speed = elapsed > 0 ? uploadedBytes / elapsed : 0;
+      const speedText = speed > 1024 * 1024
+        ? (speed / 1024 / 1024).toFixed(1) + ' MB/s'
+        : (speed / 1024).toFixed(0) + ' KB/s';
+      updateTransfer(transferId, {
+        progress: container.uploadProgress,
+        speed: speedText
+      });
+    }
   };
   updateProgress();
 
   try {
     for (const { chunk, index } of needUpload) {
       while (container.isPaused) {
+        if (transferId) updateTransfer(transferId, { status: 'paused' });
         await new Promise(r => setTimeout(r, 100));
+      }
+      if (transferId) {
+        const item = transferList.value.find(t => t.id === transferId);
+        if (item && item.status === 'paused') {
+          updateTransfer(transferId, { status: 'transferring' });
+        }
       }
 
       const form = new FormData();
       form.append('file', chunk);
       form.append('name', `${container.file!.name}-${index}`);
-      
+
       await axios.post(`${API_BASE}/upload`, form);
       success++;
       updateProgress();
@@ -843,6 +1113,10 @@ const handleUpload = async () => {
     });
 
     container.uploadProgress = 100;
+    if (transferId) {
+      updateTransfer(transferId, { status: 'completed', progress: 100, endTime: Date.now() });
+    }
+    currentUploadTransferId.value = null;
     setTimeout(() => {
       container.isShowProgress = false;
       container.uploadProgress = 0;
@@ -854,7 +1128,10 @@ const handleUpload = async () => {
 
   } catch (error) {
     console.error('上传失败:', error);
-    alert('上传失败！');
+    if (transferId) {
+      updateTransfer(transferId, { status: 'failed', endTime: Date.now() });
+    }
+    currentUploadTransferId.value = null;
     container.isShowProgress = false;
     container.uploading = false;
     fileHash.value = '';
@@ -927,14 +1204,22 @@ const openPreviewModal = (html: string) => {
 
 // 下载文件
 const handleDownload = async (file: any) => {
+  // 创建传输记录
+  const transfer = addTransfer({
+    fileName: file.name,
+    fileSize: 0, // 下载前不知道大小
+    type: 'download'
+  });
+  updateTransfer(transfer.id, { status: 'transferring' });
+
   try {
     const token = localStorage.getItem('token');
     const response = await axios.get(
       `${API_BASE}/download/${encodeURIComponent(file.name)}`,
       {
-        responseType: 'blob',  // 必须设置响应类型为 blob
+        responseType: 'blob',
         headers: {
-          Authorization: `Bearer ${token}`  // 手动携带 Token
+          Authorization: `Bearer ${token}`
         }
       }
     );
@@ -949,8 +1234,11 @@ const handleDownload = async (file: any) => {
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
 
+    updateTransfer(transfer.id, { status: 'completed', progress: 100, endTime: Date.now() });
+
   } catch (error) {
     console.error('下载失败:', error);
+    updateTransfer(transfer.id, { status: 'failed', endTime: Date.now() });
     alert('下载失败，请检查登录状态');
   }
 };
@@ -1045,14 +1333,43 @@ onUnmounted(() => {
   to { transform: rotate(360deg); }
 }
 
-.hash-checking {
+.hash-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: #333;
+  color: #fff;
+  padding: 12px 20px;
+  border-radius: 8px;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 20px 0;
-  color: #646A73;
+  gap: 10px;
   font-size: 14px;
+  z-index: 9999;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  pointer-events: auto;
+}
+
+.hash-toast-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.hash-toast-cancel {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.7);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.hash-toast-cancel:hover {
+  color: #fff;
 }
 
 .breadcrumb {
@@ -1279,5 +1596,78 @@ onUnmounted(() => {
   font-size: 20px;
   color: #4A90D9;
   font-weight: 500;
+}
+
+/* 回收站工具栏 */
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background: #FFFFFF;
+  border-bottom: 1px solid #E5E6EB;
+}
+
+.toolbar-left {
+  display: flex;
+  gap: 8px;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.btn-back {
+  background: #F5F7FA;
+  color: #646A73;
+}
+
+.btn-back:hover {
+  background: #E5E6EB;
+}
+
+.btn-danger {
+  background: #F5222D;
+  color: white;
+}
+
+.btn-danger:hover {
+  background: #D91828;
+}
+
+.btn-secondary {
+  background: #F5F7FA;
+  color: #646A73;
+}
+
+.btn-secondary:hover {
+  background: #E5E6EB;
+}
+
+.btn-icon {
+  font-size: 14px;
+}
+
+.btn-text {
+  font-size: 13px;
+}
+
+.trash-count {
+  font-size: 13px;
+  color: #999;
 }
 </style>

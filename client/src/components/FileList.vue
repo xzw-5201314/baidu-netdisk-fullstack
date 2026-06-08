@@ -12,8 +12,9 @@
             />
           </th>
           <th class="col-name">文件名</th>
-          <th class="col-time">修改时间</th>
-          <th class="col-size">大小</th>
+          <th v-if="isTrashMode" class="col-path">原位置</th>
+          <th class="col-time">{{ isTrashMode ? '删除时间' : '修改时间' }}</th>
+          <th v-if="!isTrashMode" class="col-size">大小</th>
           <th class="col-actions-header"></th>
         </tr>
       </thead>
@@ -23,7 +24,7 @@
           :key="file.id"
           class="file-row"
           :class="{ 'folder-row': file.type === 'folder', 'renaming-row': renamingId === file.id }"
-          @click="file.type === 'folder' && $emit('enter-folder', file)"
+          @click="file.type === 'folder' && !isTrashMode && $emit('enter-folder', file)"
         >
           <td class="col-check" @click.stop>
             <input
@@ -70,19 +71,26 @@
               <span class="file-icon">{{ getFileIcon(file) }}</span>
               <span
                 :class="['file-name', { 'folder-link': file.type === 'folder' }]"
-                @click="file.type === 'folder' && $emit('enter-folder', file)"
+                @click="file.type === 'folder' && !isTrashMode && $emit('enter-folder', file)"
               >{{ file.name }}</span>
             </template>
           </td>
+          <td v-if="isTrashMode" class="col-path">{{ file.originalPath || '根目录' }}</td>
           <td class="col-time">{{ file.time }}</td>
-          <td class="col-size">{{ file.size }}</td>
+          <td v-if="!isTrashMode" class="col-size">{{ file.size }}</td>
           <td class="row-actions">
             <div v-if="renamingId !== file.id" class="action-bar" @click.stop>
-              <button class="action-btn" @click="$emit('preview', file)" title="预览">👁️</button>
-              <button class="action-btn" @click="$emit('download', file)" title="下载">⬇️</button>
-              <button class="action-btn" @click="startRename(file)" title="重命名">✏️</button>
-              <button class="action-btn" @click="$emit('move', file)" title="移动到">📋</button>
-              <button class="action-btn" @click="$emit('delete', file)" title="删除">🗑️</button>
+              <template v-if="isTrashMode">
+                <button class="action-btn" @click="$emit('restore', file)" title="还原">♻️</button>
+                <button class="action-btn action-btn-danger" @click="$emit('permanent-delete', file)" title="彻底删除">🗑️</button>
+              </template>
+              <template v-else>
+                <button class="action-btn" @click="$emit('preview', file)" title="预览">👁️</button>
+                <button class="action-btn" @click="$emit('download', file)" title="下载">⬇️</button>
+                <button class="action-btn" @click="startRename(file)" title="重命名">✏️</button>
+                <button class="action-btn" @click="$emit('move', file)" title="移动到">📋</button>
+                <button class="action-btn" @click="$emit('delete', file)" title="删除">🗑️</button>
+              </template>
             </div>
           </td>
         </tr>
@@ -103,7 +111,7 @@
         />
         <div 
           :class="['card-icon', { 'folder-icon': file.type === 'folder' }]"
-          @click="file.type === 'folder' && $emit('enter-folder', file)"
+          @click="file.type === 'folder' && !isTrashMode && $emit('enter-folder', file)"
         >{{ getFileIcon(file) }}</div>
         <div
           v-if="renamingId === file.id"
@@ -125,15 +133,24 @@
         <div
           v-else
           :class="['card-name', { 'folder-link': file.type === 'folder' }]"
-          @click="file.type === 'folder' && $emit('enter-folder', file)"
+          @click="file.type === 'folder' && !isTrashMode && $emit('enter-folder', file)"
         >{{ file.name }}</div>
-        <div class="card-meta">{{ file.size }} · {{ file.time }}</div>
+        <div class="card-meta">
+          <template v-if="isTrashMode">{{ file.originalPath || '根目录' }} · {{ file.time }}</template>
+          <template v-else>{{ file.size }} · {{ file.time }}</template>
+        </div>
         <div v-if="renamingId !== file.id" class="card-actions">
-          <button class="card-action-btn" @click="$emit('preview', file)">👁️</button>
-          <button class="card-action-btn" @click="$emit('download', file)">⬇️</button>
-          <button class="card-action-btn" @click="startRename(file)">✏️</button>
-          <button class="card-action-btn" @click="$emit('move', file)">📋</button>
-          <button class="card-action-btn" @click="$emit('delete', file)">🗑️</button>
+          <template v-if="isTrashMode">
+            <button class="card-action-btn" @click="$emit('restore', file)">♻️</button>
+            <button class="card-action-btn card-action-btn-danger" @click="$emit('permanent-delete', file)">🗑️</button>
+          </template>
+          <template v-else>
+            <button class="card-action-btn" @click="$emit('preview', file)">👁️</button>
+            <button class="card-action-btn" @click="$emit('download', file)">⬇️</button>
+            <button class="card-action-btn" @click="startRename(file)">✏️</button>
+            <button class="card-action-btn" @click="$emit('move', file)">📋</button>
+            <button class="card-action-btn" @click="$emit('delete', file)">🗑️</button>
+          </template>
         </div>
       </div>
     </div>
@@ -148,9 +165,10 @@ const props = defineProps<{
   selectedIds: string[];
   viewMode: string;
   renamingId?: string | null;
+  isTrashMode?: boolean;
 }>();
 
-const emit = defineEmits(['preview', 'download', 'move', 'delete', 'rename', 'select-change', 'enter-folder', 'confirm-create', 'cancel-create', 'confirm-rename', 'cancel-rename']);
+const emit = defineEmits(['preview', 'download', 'move', 'delete', 'rename', 'select-change', 'enter-folder', 'confirm-create', 'cancel-create', 'confirm-rename', 'cancel-rename', 'restore', 'permanent-delete']);
 
 const renameValue = ref('');
 
@@ -284,6 +302,13 @@ const getFileIcon = (file: any) => {
   text-align: right;
 }
 
+.col-path {
+  width: 15%;
+  text-align: left;
+  color: #999;
+  font-size: 13px;
+}
+
 .col-actions-header {
   width: 0;
   padding: 0 !important;
@@ -347,6 +372,10 @@ const getFileIcon = (file: any) => {
 
 .action-btn:hover {
   background: rgba(0, 0, 0, 0.08);
+}
+
+.action-btn-danger:hover {
+  background: rgba(245, 34, 45, 0.1);
 }
 
 /* 自定义 tooltip */
@@ -523,6 +552,11 @@ const getFileIcon = (file: any) => {
 
 .card-action-btn:hover {
   background: #E5E6EB;
+}
+
+.card-action-btn-danger:hover {
+  background: #FDE2E2;
+  color: #F5222D;
 }
 
 .card-rename-wrapper {

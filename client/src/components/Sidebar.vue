@@ -2,14 +2,15 @@
 <template>
   <aside class="sidebar">
     <div class="sidebar-nav">
-      <div 
-        v-for="item in navItems" 
+      <div
+        v-for="item in navItems"
         :key="item.id"
         :class="['nav-item', { active: currentNav === item.id }]"
         @click="$emit('nav-change', item.id)"
       >
         <span class="nav-icon">{{ item.icon }}</span>
         <span class="nav-text">{{ item.name }}</span>
+        <span v-if="item.id === 'transfer' && activeTransferCount > 0" class="nav-badge">{{ activeTransferCount }}</span>
       </div>
     </div>
     
@@ -31,7 +32,7 @@
     <div class="sidebar-divider"></div>
     
     <div class="sidebar-bottom">
-      <div class="nav-item" @click="$emit('nav-change', 'recycle')">
+      <div :class="['nav-item', { active: currentNav === 'recycle' }]" @click="$emit('nav-change', 'recycle')">
         <span class="nav-icon">🗑️</span>
         <span class="nav-text">回收站</span>
       </div>
@@ -54,6 +55,7 @@ defineProps<{
   usedSpace?: string;
   totalSpace?: string;
   usedPercent?: number;
+  activeTransferCount?: number;
 }>();
 
 defineEmits(['nav-change', 'category-change']);
@@ -119,6 +121,19 @@ const categories = [
 
 .nav-text {
   font-size: 14px;
+}
+
+.nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  line-height: 20px;
+  text-align: center;
+  font-size: 11px;
+  color: white;
+  background: #F5222D;
+  border-radius: 10px;
+  padding: 0 6px;
 }
 
 .sidebar-divider {
