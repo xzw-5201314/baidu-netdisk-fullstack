@@ -39,6 +39,18 @@
         </div>
         <div class="transfer-actions">
           <button
+            v-if="item.status === 'transferring' && item.type === 'download'"
+            class="action-btn"
+            @click="$emit('pause', item.id)"
+            title="暂停"
+          >⏸</button>
+          <button
+            v-if="item.status === 'paused' && item.type === 'download'"
+            class="action-btn"
+            @click="$emit('resume', item)"
+            title="继续"
+          >▶</button>
+          <button
             v-if="item.status === 'completed' || item.status === 'failed'"
             class="action-btn"
             @click="$emit('remove', item.id)"
@@ -75,7 +87,7 @@ const props = defineProps<{
   transfers: TransferItem[];
 }>();
 
-defineEmits(['remove']);
+defineEmits(['remove', 'pause', 'resume']);
 
 const activeTab = ref('all');
 

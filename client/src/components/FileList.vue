@@ -87,6 +87,7 @@
               <template v-else>
                 <button class="action-btn" @click="$emit('preview', file)" title="预览">👁️</button>
                 <button class="action-btn" @click="$emit('download', file)" title="下载">⬇️</button>
+                <button class="action-btn" @click="$emit('share', file)" title="分享">🔗</button>
                 <button class="action-btn" @click="startRename(file)" title="重命名">✏️</button>
                 <button class="action-btn" @click="$emit('move', file)" title="移动到">📋</button>
                 <button class="action-btn" @click="$emit('delete', file)" title="删除">🗑️</button>
@@ -147,6 +148,7 @@
           <template v-else>
             <button class="card-action-btn" @click="$emit('preview', file)">👁️</button>
             <button class="card-action-btn" @click="$emit('download', file)">⬇️</button>
+            <button class="card-action-btn" @click="$emit('share', file)">🔗</button>
             <button class="card-action-btn" @click="startRename(file)">✏️</button>
             <button class="card-action-btn" @click="$emit('move', file)">📋</button>
             <button class="card-action-btn" @click="$emit('delete', file)">🗑️</button>
@@ -168,7 +170,7 @@ const props = defineProps<{
   isTrashMode?: boolean;
 }>();
 
-const emit = defineEmits(['preview', 'download', 'move', 'delete', 'rename', 'select-change', 'enter-folder', 'confirm-create', 'cancel-create', 'confirm-rename', 'cancel-rename', 'restore', 'permanent-delete']);
+const emit = defineEmits(['preview', 'download', 'share', 'move', 'delete', 'rename', 'select-change', 'enter-folder', 'confirm-create', 'cancel-create', 'confirm-rename', 'cancel-rename', 'restore', 'permanent-delete']);
 
 const renameValue = ref('');
 

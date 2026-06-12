@@ -1,7 +1,10 @@
 <template>
   <div class="app">
+    <!-- 分享访问页（独立于登录状态） -->
+    <ShareAccess v-if="isShareAccessPage" />
+
     <!-- 登录页面 -->
-    <Login v-if="!isLoggedIn" @login-success="handleLoginSuccess" />
+    <Login v-else-if="!isLoggedIn" @login-success="handleLoginSuccess" />
     
     <!-- 主页面 -->
     <template v-else>
@@ -22,7 +25,7 @@
         <main class="content">
           <!-- 正常模式工具栏 -->
           <Toolbar
-            v-if="!isTrashMode && !isTransferMode"
+            v-if="!isTrashMode && !isTransferMode && !isShareMode"
             :selected-count="selectedIds.length"
             :view-mode="viewMode"
             @upload="handleUploadClick"
@@ -63,6 +66,18 @@
               <span class="trash-count">共 {{ transferList.length }} 项</span>
             </div>
           </div>
+          <!-- 分享列表工具栏 -->
+          <div v-else-if="isShareMode" class="toolbar">
+            <div class="toolbar-left">
+              <button class="btn btn-back" @click="handleNavChange('all')">
+                <span class="btn-icon">←</span>
+                <span class="btn-text">返回</span>
+              </button>
+            </div>
+            <div class="toolbar-right">
+              <span class="trash-count">共 {{ myShares.length }} 项</span>
+            </div>
+          </div>
           
           <!-- 面包屑导航 -->
           <div class="breadcrumb">
@@ -83,6 +98,14 @@
               v-if="isTransferMode"
               :transfers="transferList"
               @remove="handleRemoveTransfer"
+              @pause="handlePauseDownload"
+              @resume="handleResumeDownload"
+            />
+            <!-- 分享列表视图 -->
+            <ShareList
+              v-else-if="isShareMode"
+              :shares="myShares"
+              @revoke="handleRevokeShare"
             />
             <!-- 正常/回收站视图 -->
             <template v-else>
@@ -106,6 +129,7 @@
                 :is-trash-mode="isTrashMode"
                 @preview="handlePreview"
                 @download="handleDownload"
+                @share="handleShare"
                 @move="handleMove"
                 @delete="handleDelete"
                 @rename="handleStartRename"
@@ -141,6 +165,15 @@
       :move-id="moveSelectedId"
       @close="showMoveDialog = false"
       @confirm="handleMoveConfirm"
+    />
+
+    <!-- 分享对话框 -->
+    <ShareDialog
+      :visible="showShareDialog"
+      :target-id="shareTargetId"
+      :share-type="shareType"
+      :share-name="shareName"
+      @close="showShareDialog = false"
     />
 
     <!-- 设置弹窗 -->
@@ -208,6 +241,12 @@ import FileList from './components/FileList.vue';
 import EmptyState from './components/EmptyState.vue';
 import MoveDialog from './components/MoveDialog.vue';
 import TransferList from './components/TransferList.vue';
+import ShareDialog from './components/ShareDialog.vue';
+import ShareList from './components/ShareList.vue';
+import ShareAccess from './components/ShareAccess.vue';
+
+// 判断当前是否为分享访问页
+const isShareAccessPage = computed(() => window.location.pathname.startsWith('/s/'));
 
 
 
@@ -317,6 +356,10 @@ const saveTransfers = () => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(transferList.value));
 };
 
+// 下载控制状态
+const downloadControllers = new Map<string, AbortController>();
+const downloadChunks = new Map<string, Blob[]>();
+
 // 新增传输记录
 const addTransfer = (item: Omit<TransferItem, 'id' | 'startTime' | 'status' | 'progress' | 'speed'>): TransferItem => {
   const transfer: TransferItem = {
@@ -351,6 +394,16 @@ const showMoveDialog = ref(false);
 const moveTargetId = ref<string | null>(null);
 const moveType = ref('file');
 const moveSelectedId = ref<string | null>(null);
+
+// 分享对话框状态
+const showShareDialog = ref(false);
+const shareTargetId = ref('');
+const shareType = ref<'file' | 'folder'>('file');
+const shareName = ref('');
+
+// 我的分享列表状态
+const myShares = ref<any[]>([]);
+const isShareMode = computed(() => currentNav.value === 'share');
 
 // 文件夹相关状态
 const currentFolderId = ref<string | null>(null);
@@ -600,6 +653,9 @@ const refreshFileList = () => {
   if (isTransferMode.value) {
     return; // 传输列表不需要刷新文件列表
   }
+  if (isShareMode.value) {
+    return getMyShares();
+  }
   if (isSearchMode.value) {
     return handleSearch(searchKeyword.value);
   }
@@ -681,6 +737,43 @@ const handleClearCompleted = () => {
   saveTransfers();
 };
 
+// ==================== 分享操作 ====================
+
+// 点击分享按钮
+const handleShare = (file: any) => {
+  shareTargetId.value = file.id;
+  shareType.value = file.type === 'folder' ? 'folder' : 'file';
+  shareName.value = file.name;
+  showShareDialog.value = true;
+};
+
+// 获取我的分享列表
+const getMyShares = async () => {
+  try {
+    const res = await axios.get(`${API_BASE}/api/shares`);
+    if (res.data.code === 200) {
+      myShares.value = res.data.data;
+    } else {
+      myShares.value = [];
+    }
+  } catch (error) {
+    console.error('获取分享列表失败:', error);
+    myShares.value = [];
+  }
+};
+
+// 取消分享
+const handleRevokeShare = async (share: any) => {
+  if (!confirm(`确定取消对 "${share.shareName}" 的分享吗？`)) return;
+  try {
+    await axios.delete(`${API_BASE}/api/share/${share.id}`);
+    ElMessage.success('已取消分享');
+    await getMyShares();
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.msg || '取消分享失败');
+  }
+};
+
 // 重命名
 const handleStartRename = (id: string) => {
   renamingId.value = id;
@@ -734,6 +827,13 @@ const handleNavChange = async (nav: string) => {
     currentFolderId.value = null;
     currentPath.value = [{ id: null, name: '传输列表' }];
     selectedIds.value = [];
+  } else if (nav === 'share') {
+    searchKeyword.value = '';
+    currentCategory.value = 'all';
+    currentFolderId.value = null;
+    currentPath.value = [{ id: null, name: '我的分享' }];
+    selectedIds.value = [];
+    await getMyShares();
   }
 };
 
@@ -1202,45 +1302,156 @@ const openPreviewModal = (html: string) => {
   document.addEventListener('keydown', onKeydown);
 };
 
-// 下载文件
-const handleDownload = async (file: any) => {
-  // 创建传输记录
-  const transfer = addTransfer({
-    fileName: file.name,
-    fileSize: 0, // 下载前不知道大小
-    type: 'download'
-  });
-  updateTransfer(transfer.id, { status: 'transferring' });
+// 下载文件（fetch 流式下载 + 断点续传）
+const handleDownload = async (file: any, resumeFrom?: { transferId: string, chunks: Blob[], downloadedBytes: number }) => {
+  const transferId = resumeFrom?.transferId || '';
+  const existingChunks = resumeFrom?.chunks || [];
+  const startBytes = resumeFrom?.downloadedBytes || 0;
+
+  // 如果不是续传，创建新的传输记录
+  let currentTransferId = transferId;
+  if (!resumeFrom) {
+    const transfer = addTransfer({
+      fileName: file.name,
+      fileSize: 0,
+      type: 'download'
+    });
+    currentTransferId = transfer.id;
+    updateTransfer(currentTransferId, { status: 'transferring' });
+  } else {
+    updateTransfer(currentTransferId, { status: 'transferring' });
+  }
+
+  const controller = new AbortController();
+  downloadControllers.set(currentTransferId, controller);
+  downloadChunks.set(currentTransferId, [...existingChunks]);
+
+  const token = localStorage.getItem('token');
+  let downloadedBytes = startBytes;
+  let totalBytes = 0;
+  const startTime = Date.now();
+  let lastSpeedTime = startTime;
+  let bytesSinceLastSpeed = 0;
 
   try {
-    const token = localStorage.getItem('token');
-    const response = await axios.get(
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`
+    };
+    // 断点续传：带上 Range 头
+    if (startBytes > 0) {
+      headers['Range'] = `bytes=${startBytes}-`;
+    }
+
+    const response = await fetch(
       `${API_BASE}/download/${encodeURIComponent(file.name)}`,
-      {
-        responseType: 'blob',
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      }
+      { headers, signal: controller.signal }
     );
 
-    // 创建下载链接
-    const url = window.URL.createObjectURL(new Blob([response.data]));
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    // 读取文件总大小
+    const contentLength = response.headers.get('Content-Length');
+    if (startBytes > 0 && response.status === 206) {
+      // 续传：Content-Length 是剩余大小
+      totalBytes = startBytes + (contentLength ? parseInt(contentLength) : 0);
+    } else {
+      totalBytes = contentLength ? parseInt(contentLength) : 0;
+    }
+
+    if (totalBytes > 0) {
+      updateTransfer(currentTransferId, { fileSize: totalBytes });
+    }
+
+    // 流式读取
+    const reader = response.body!.getReader();
+    const chunks = [...existingChunks];
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      chunks.push(new Blob([value]));
+      // 实时保存 chunks 到 Map，暂停时能拿到最新数据
+      downloadChunks.set(currentTransferId, [...chunks]);
+      downloadedBytes += value.byteLength;
+      bytesSinceLastSpeed += value.byteLength;
+
+      // 更新进度
+      const progress = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
+
+      // 每 500ms 更新一次速度
+      const now = Date.now();
+      if (now - lastSpeedTime >= 500) {
+        const elapsed = (now - lastSpeedTime) / 1000;
+        const speed = bytesSinceLastSpeed / elapsed;
+        const speedText = speed > 1024 * 1024
+          ? (speed / 1024 / 1024).toFixed(1) + ' MB/s'
+          : (speed / 1024).toFixed(0) + ' KB/s';
+        updateTransfer(currentTransferId, { progress, speed: speedText });
+        lastSpeedTime = now;
+        bytesSinceLastSpeed = 0;
+      } else {
+        updateTransfer(currentTransferId, { progress });
+      }
+    }
+
+    // 下载完成，合成文件并保存
+    downloadControllers.delete(currentTransferId);
+    downloadChunks.delete(currentTransferId);
+
+    const blob = new Blob(chunks);
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
     link.download = file.name;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
+    URL.revokeObjectURL(url);
 
-    updateTransfer(transfer.id, { status: 'completed', progress: 100, endTime: Date.now() });
+    updateTransfer(currentTransferId, {
+      status: 'completed',
+      progress: 100,
+      endTime: Date.now(),
+      speed: ''
+    });
 
-  } catch (error) {
+  } catch (error: any) {
+    downloadControllers.delete(currentTransferId);
+
+    if (error.name === 'AbortError') {
+      // 用户暂停，chunks 已在读取过程中实时保存到 Map
+      updateTransfer(currentTransferId, { status: 'paused', speed: '' });
+      return;
+    }
+
+    downloadChunks.delete(currentTransferId);
     console.error('下载失败:', error);
-    updateTransfer(transfer.id, { status: 'failed', endTime: Date.now() });
-    alert('下载失败，请检查登录状态');
+    updateTransfer(currentTransferId, { status: 'failed', endTime: Date.now(), speed: '' });
+    ElMessage.error('下载失败');
   }
+};
+
+// 暂停下载
+const handlePauseDownload = (transferId: string) => {
+  const controller = downloadControllers.get(transferId);
+  if (controller) {
+    controller.abort();
+  }
+};
+
+// 继续下载
+const handleResumeDownload = (transfer: TransferItem) => {
+  const chunks = downloadChunks.get(transfer.id) || [];
+  const downloadedBytes = chunks.reduce((sum, chunk) => sum + chunk.size, 0);
+
+  handleDownload({ name: transfer.fileName }, {
+    transferId: transfer.id,
+    chunks,
+    downloadedBytes
+  });
 };
 // 删除文件
 const handleDelete = async (item: any) => {
