@@ -10,7 +10,7 @@
       >
         <span class="nav-icon">{{ item.icon }}</span>
         <span class="nav-text">{{ item.name }}</span>
-        <span v-if="item.id === 'transfer' && activeTransferCount > 0" class="nav-badge">{{ activeTransferCount }}</span>
+        <span v-if="item.id === 'transfer' && (activeTransferCount ?? 0) > 0" class="nav-badge">{{ activeTransferCount }}</span>
       </div>
     </div>
     
