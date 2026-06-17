@@ -104,6 +104,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import axios from 'axios';
+import { ElMessage } from 'element-plus';
 import { API_BASE } from './config/api';
 import { isFileOversize } from './utils/file';
 import { useUserStore } from './stores/useUserStore';
@@ -265,7 +266,7 @@ const onDocDrop = (e: DragEvent) => {
   }
 
   if (oversized.length > 0) {
-    alert(`以下文件超过 5GB 限制，已跳过：\n${oversized.join('\n')}`);
+    ElMessage.warning(`以下文件超过 5GB 限制，已跳过：${oversized.join('、')}`);
   }
 
   if (validFiles.length > 0) {

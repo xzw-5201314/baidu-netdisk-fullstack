@@ -46,9 +46,10 @@
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus';
+import type { ShareItem } from '../types/file';
 
 defineProps<{
-  shares: any[];
+  shares: ShareItem[];
 }>();
 
 defineEmits(['revoke']);
@@ -69,14 +70,14 @@ const copyLink = async (code: string) => {
   }
 };
 
-const getStatusClass = (share: any) => {
+const getStatusClass = (share: ShareItem) => {
   if (share.status === 'expired') return 'status-expired';
   if (share.status === 'revoked') return 'status-revoked';
   if (share.expireAt && new Date(share.expireAt) < new Date()) return 'status-expired';
   return 'status-active';
 };
 
-const getStatusText = (share: any) => {
+const getStatusText = (share: ShareItem) => {
   if (share.status === 'revoked') return '已取消';
   if (share.status === 'expired') return '已过期';
   if (share.expireAt && new Date(share.expireAt) < new Date()) return '已过期';

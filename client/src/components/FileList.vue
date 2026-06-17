@@ -161,9 +161,10 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import type { FileItem, TrashItem } from '../types/file';
 
 const props = defineProps<{
-  files: any[];
+  files: (FileItem | TrashItem)[];
   selectedIds: string[];
   viewMode: string;
   renamingId?: string | null;
@@ -174,7 +175,7 @@ const emit = defineEmits(['preview', 'download', 'share', 'move', 'delete', 'ren
 
 const renameValue = ref('');
 
-const startRename = (file: any) => {
+const startRename = (file: FileItem | TrashItem) => {
   renameValue.value = file.name;
   emit('rename', file.id);
 };
@@ -232,7 +233,7 @@ const toggleSelect = (id: string) => {
   emit('select-change', newIds);
 };
 
-const getFileIcon = (file: any) => {
+const getFileIcon = (file: FileItem | TrashItem) => {
   // 如果是文件夹，返回文件夹图标
   if (file.type === 'folder') {
     return '📁';

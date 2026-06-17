@@ -7,6 +7,8 @@ import { parseSize, formatSpeed } from '../utils/format';
 import { calculateFileHash } from '../utils/hash';
 import { createFileChunks } from '../utils/file';
 import { useTransferStore } from './useTransferStore';
+import type { FileItem, ApiFileItem, ApiFolderItem } from '../types/file';
+import type { TransferItem } from './useTransferStore';
 
 export const useFileStore = defineStore('file', () => {
   // ==================== 状态 ====================
@@ -14,7 +16,7 @@ export const useFileStore = defineStore('file', () => {
     file: null as File | null,
     uploadProgress: 0,
     uploading: false,
-    fileList: [] as any[],
+    fileList: [] as FileItem[],
     isPaused: false,
     isShowProgress: false
   });
@@ -110,27 +112,27 @@ export const useFileStore = defineStore('file', () => {
 
       const filesRes = await axios.get(`${API_BASE}/files?${params.toString()}`);
 
-      let folders: any[] = [];
+      let folders: FileItem[] = [];
       if (!category || category === 'all') {
         const foldersRes = await axios.get(folderId
           ? `${API_BASE}/folders?parentId=${folderId}`
           : `${API_BASE}/folders?parentId=null`
         );
         folders = foldersRes.data.code === 200
-          ? foldersRes.data.data.map((folder: any) => ({
-              id: folder.id || folder._id,
+          ? foldersRes.data.data.map((folder: ApiFolderItem) => ({
+              id: folder._id,
               name: folder.name,
-              type: 'folder',
+              type: 'folder' as const,
               size: '0 KB',
               time: ''
             }))
           : [];
       }
 
-      const files = filesRes.data.code === 200
-        ? filesRes.data.data.map((file: any) => ({
+      const files: FileItem[] = filesRes.data.code === 200
+        ? filesRes.data.data.map((file: ApiFileItem) => ({
             ...file,
-            type: 'file'
+            type: 'file' as const
           }))
         : [];
 
@@ -148,7 +150,7 @@ export const useFileStore = defineStore('file', () => {
   };
 
   // ==================== 文件夹导航 ====================
-  const enterFolder = async (folder: any) => {
+  const enterFolder = async (folder: FileItem) => {
     currentFolderId.value = folder.id;
     currentPath.value.push({ id: folder.id, name: folder.name });
     await getFileList(folder.id);
@@ -195,7 +197,7 @@ export const useFileStore = defineStore('file', () => {
       });
       await refreshFileList();
     } catch (error) {
-      alert('创建失败');
+      ElMessage.error('创建失败');
       container.fileList.shift();
     }
   };
@@ -224,7 +226,7 @@ export const useFileStore = defineStore('file', () => {
       }
       await refreshFileList();
     } catch (error: any) {
-      alert(error.response?.data?.msg || '重命名失败');
+      ElMessage.error(error.response?.data?.msg || '重命名失败');
     } finally {
       renamingId.value = null;
     }
@@ -235,7 +237,7 @@ export const useFileStore = defineStore('file', () => {
   };
 
   // ==================== 删除 ====================
-  const handleDelete = async (item: any) => {
+  const handleDelete = async (item: FileItem) => {
     if (!confirm(`确定删除 "${item.name}" 吗？`)) return;
     try {
       if (item.type === 'folder') {
@@ -246,7 +248,7 @@ export const useFileStore = defineStore('file', () => {
       refreshFileList();
     } catch (error) {
       console.error('删除失败:', error);
-      alert('删除失败');
+      ElMessage.error('删除失败');
     }
   };
 
@@ -266,7 +268,7 @@ export const useFileStore = defineStore('file', () => {
       await refreshFileList();
     } catch (error) {
       console.error('批量删除失败:', error);
-      alert('批量删除失败');
+      ElMessage.error('批量删除失败');
     }
   };
 
@@ -493,7 +495,7 @@ export const useFileStore = defineStore('file', () => {
   };
 
   // ==================== 下载 ====================
-  const handleDownload = async (file: any, resumeFrom?: { transferId: string, chunks: Blob[], downloadedBytes: number }) => {
+  const handleDownload = async (file: { name: string }, resumeFrom?: { transferId: string, chunks: Blob[], downloadedBytes: number }) => {
     const transferStore = useTransferStore();
     const transferId = resumeFrom?.transferId || '';
     const existingChunks = resumeFrom?.chunks || [];
@@ -622,7 +624,7 @@ export const useFileStore = defineStore('file', () => {
   };
 
   // 继续下载
-  const handleResumeDownload = (transfer: any) => {
+  const handleResumeDownload = (transfer: TransferItem) => {
     const transferStore = useTransferStore();
     const chunks = transferStore.downloadChunks.get(transfer.id) || [];
     const downloadedBytes = chunks.reduce((sum, chunk) => sum + chunk.size, 0);

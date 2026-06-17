@@ -44,6 +44,7 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue';
 import axios from 'axios';
+import { ElMessage } from 'element-plus';
 import { API_BASE } from '../config/api';
 
 const emit = defineEmits(['login-success']);
@@ -57,7 +58,7 @@ const form = reactive({
 
 const handleSubmit = async () => {
   if (!form.username || !form.password) {
-    alert('请填写完整信息');
+    ElMessage.warning('请填写完整信息');
     return;
   }
 
@@ -74,21 +75,21 @@ const handleSubmit = async () => {
         localStorage.setItem('username', res.data.data.username);
         emit('login-success');
       } else {
-        alert('注册成功，请登录');
+        ElMessage.success('注册成功，请登录');
         isLogin.value = true;
       }
     } else {
-      alert(res.data.msg);
+      ElMessage.error(res.data.msg);
     }
   } catch (error: any) {
     // 更详细的错误处理
     if (error.response) {
       const msg = error.response.data?.msg || '请求失败';
-      alert(msg);
+      ElMessage.error(msg);
     } else if (error.request) {
-      alert('网络连接失败，请检查后端服务');
+      ElMessage.error('网络连接失败，请检查后端服务');
     } else {
-      alert('请求错误: ' + error.message);
+      ElMessage.error('请求错误: ' + error.message);
     }
   } finally {
     loading.value = false;

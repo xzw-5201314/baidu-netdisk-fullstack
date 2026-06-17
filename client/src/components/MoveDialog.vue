@@ -63,6 +63,7 @@
 <script setup>
 import { ref, watch } from 'vue';
 import axios from 'axios';
+import { ElMessage } from 'element-plus';
 import { API_BASE } from '../config/api';
 import FolderTreeItem from './FolderTreeItem.vue';
 
@@ -123,7 +124,7 @@ const confirmMove = async () => {
     }
     emit('confirm');
   } catch (error) {
-    alert(error.response?.data?.msg || '移动失败');
+    ElMessage.error(error.response?.data?.msg || '移动失败');
   } finally {
     loading.value = false;
   }

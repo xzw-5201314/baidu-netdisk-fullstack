@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import axios from 'axios';
 import { ElMessage } from 'element-plus';
 import { API_BASE } from '../config/api';
+import type { ShareItem, FileItem } from '../types/file';
 
 export const useShareStore = defineStore('share', () => {
   // 分享对话框状态
@@ -12,10 +13,10 @@ export const useShareStore = defineStore('share', () => {
   const shareName = ref('');
 
   // 我的分享列表
-  const myShares = ref<any[]>([]);
+  const myShares = ref<ShareItem[]>([]);
 
   // 点击分享按钮
-  const handleShare = (file: any) => {
+  const handleShare = (file: FileItem) => {
     shareTargetId.value = file.id;
     shareType.value = file.type === 'folder' ? 'folder' : 'file';
     shareName.value = file.name;
@@ -38,7 +39,7 @@ export const useShareStore = defineStore('share', () => {
   };
 
   // 取消分享
-  const handleRevokeShare = async (share: any) => {
+  const handleRevokeShare = async (share: ShareItem) => {
     if (!confirm(`确定取消对 "${share.shareName}" 的分享吗？`)) return;
     try {
       await axios.delete(`${API_BASE}/api/share/${share.id}`);

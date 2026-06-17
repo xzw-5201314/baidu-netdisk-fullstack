@@ -70,17 +70,30 @@
       @close="showMoveDialog = false"
       @confirm="handleMoveConfirm"
     />
+
+    <!-- 文件预览弹窗 -->
+    <PreviewModal
+      :visible="previewVisible"
+      :url="previewUrl"
+      :type="previewType"
+      @close="previewVisible = false"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
+import { ElMessage } from 'element-plus';
 import { useFileStore } from '../stores/useFileStore';
 import { useShareStore } from '../stores/useShareStore';
+import { API_BASE } from '../config/api';
+import type { FileItem } from '../types/file';
+import type { PreviewType } from '../components/PreviewModal.vue';
 import Toolbar from '../components/Toolbar.vue';
 import FileList from '../components/FileList.vue';
 import EmptyState from '../components/EmptyState.vue';
 import MoveDialog from '../components/MoveDialog.vue';
+import PreviewModal from '../components/PreviewModal.vue';
 
 const fileStore = useFileStore();
 const shareStore = useShareStore();
@@ -91,7 +104,7 @@ const moveTargetId = ref<string | null>(null);
 const moveType = ref('file');
 const moveSelectedId = ref<string | null>(null);
 
-const handleMove = (file: any) => {
+const handleMove = (file: FileItem) => {
   moveType.value = file.type;
   moveSelectedId.value = file.id;
   moveTargetId.value = null;
@@ -104,58 +117,35 @@ const handleMoveConfirm = async () => {
 };
 
 // 预览
-const API_BASE = 'http://localhost:3000';
+const previewVisible = ref(false);
+const previewUrl = ref('');
+const previewType = ref<PreviewType>('video');
 
-const handlePreview = (file: any) => {
+const extTypeMap: Record<string, PreviewType> = {
+  mp4: 'video', mov: 'video', avi: 'video', webm: 'video',
+  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', bmp: 'image',
+  pdf: 'pdf',
+  mp3: 'audio', wav: 'audio', ogg: 'audio', flac: 'audio',
+};
+
+const handlePreview = (file: FileItem) => {
   const ext = file.name.split('.').pop()?.toLowerCase() || '';
-  const token = localStorage.getItem('token');
+  const type = extTypeMap[ext];
 
-  if (!token) {
-    alert('登录已失效，请重新登录');
+  if (!type) {
+    ElMessage.warning(`「${file.name}」不支持在线预览`);
     return;
   }
 
-  const url = `${API_BASE}/api/file/preview?fileId=${file.id}&token=${encodeURIComponent(token)}`;
-
-  if (['mp4', 'mov', 'avi', 'webm'].includes(ext)) {
-    openPreviewModal(`<video controls autoplay style="max-width:100%;max-height:85vh" src="${url}"></video>`);
-  } else if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(ext)) {
-    openPreviewModal(`<img src="${url}" style="max-width:100%;max-height:85vh;object-fit:contain" />`);
-  } else if (ext === 'pdf') {
-    openPreviewModal(`<iframe src="${url}" style="width:100%;height:85vh;border:none"></iframe>`);
-  } else if (['mp3', 'wav', 'ogg', 'flac'].includes(ext)) {
-    openPreviewModal(`<audio controls autoplay src="${url}"></audio>`);
-  } else {
-    alert(`「${file.name}」\n\n该文件类型不支持在线预览`);
+  const token = localStorage.getItem('token');
+  if (!token) {
+    ElMessage.error('登录已失效，请重新登录');
+    return;
   }
-};
 
-const openPreviewModal = (html: string) => {
-  document.getElementById('preview-modal')?.remove();
-
-  const overlay = document.createElement('div');
-  overlay.id = 'preview-modal';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px';
-  overlay.innerHTML = `
-    <div style="position:relative;max-width:95vw;max-height:95vh">
-      <button id="preview-close-btn" style="position:absolute;top:-36px;right:0;background:none;border:none;color:#fff;font-size:24px;cursor:pointer;z-index:10001">✕ 关闭</button>
-      <div style="text-align:center">${html}</div>
-    </div>
-  `;
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) overlay.remove();
-  });
-  document.body.appendChild(overlay);
-
-  document.getElementById('preview-close-btn')?.addEventListener('click', () => overlay.remove());
-
-  const onKeydown = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      overlay.remove();
-      document.removeEventListener('keydown', onKeydown);
-    }
-  };
-  document.addEventListener('keydown', onKeydown);
+  previewUrl.value = `${API_BASE}/api/file/preview?fileId=${file.id}&token=${encodeURIComponent(token)}`;
+  previewType.value = type;
+  previewVisible.value = true;
 };
 
 onMounted(() => {

@@ -87,6 +87,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import axios from 'axios';
+import { ElMessage } from 'element-plus';
 import { API_BASE } from '../config/api';
 
 const loading = ref(true);
@@ -169,7 +170,7 @@ const verifyPassword = async () => {
 // 下载文件
 const handleDownload = async () => {
   try {
-    const params: any = {};
+    const params: Record<string, string> = {};
     if (needPassword.value && passwordVerified.value) {
       params.password = inputPassword.value.trim();
     }
@@ -203,12 +204,12 @@ const handleDownload = async () => {
       try {
         const text = await err.response.data.text();
         const json = JSON.parse(text);
-        alert(json.msg || '下载失败');
+        ElMessage.error(json.msg || '下载失败');
       } catch {
-        alert('下载失败');
+        ElMessage.error('下载失败');
       }
     } else {
-      alert(err.response?.data?.msg || '下载失败');
+      ElMessage.error(err.response?.data?.msg || '下载失败');
     }
   }
 };
